@@ -5,10 +5,9 @@ use alloy_primitives::{hex, Address};
 use alloy_rpc_types::TransactionInfo;
 use revm::{
     db::{CacheDB, EmptyDB},
-    interpreter::CreateScheme,
     primitives::{
         BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ExecutionResult, HandlerCfg,
-        Output, SpecId, TransactTo, TxEnv,
+        Output, SpecId, TransactTo, TxEnv, CreateScheme,
     },
     DatabaseCommit,
 };

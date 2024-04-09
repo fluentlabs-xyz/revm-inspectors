@@ -1,9 +1,6 @@
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types::{AccessList, AccessListItem};
-use revm::{
-    interpreter::{opcode, Interpreter},
-    Database, EvmContext, Inspector,
-};
+use revm::{Database, EvmContext, Inspector, interpreter::Interpreter};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// An [Inspector] that collects touched accounts and storage slots.
@@ -63,37 +60,37 @@ where
     DB: Database,
 {
     fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
-        match interp.current_opcode() {
-            opcode::SLOAD | opcode::SSTORE => {
-                if let Ok(slot) = interp.stack().peek(0) {
-                    let cur_contract = interp.contract.address;
-                    self.access_list
-                        .entry(cur_contract)
-                        .or_default()
-                        .insert(B256::from(slot.to_be_bytes()));
-                }
-            }
-            opcode::EXTCODECOPY
-            | opcode::EXTCODEHASH
-            | opcode::EXTCODESIZE
-            | opcode::BALANCE
-            | opcode::SELFDESTRUCT => {
-                if let Ok(slot) = interp.stack().peek(0) {
-                    let addr = Address::from_word(B256::from(slot.to_be_bytes()));
-                    if !self.excluded.contains(&addr) {
-                        self.access_list.entry(addr).or_default();
-                    }
-                }
-            }
-            opcode::DELEGATECALL | opcode::CALL | opcode::STATICCALL | opcode::CALLCODE => {
-                if let Ok(slot) = interp.stack().peek(1) {
-                    let addr = Address::from_word(B256::from(slot.to_be_bytes()));
-                    if !self.excluded.contains(&addr) {
-                        self.access_list.entry(addr).or_default();
-                    }
-                }
-            }
-            _ => (),
-        }
+        // match interp.current_opcode() {
+        //     opcode::SLOAD | opcode::SSTORE => {
+        //         if let Ok(slot) = interp.stack().peek(0) {
+        //             let cur_contract = interp.contract.address;
+        //             self.access_list
+        //                 .entry(cur_contract)
+        //                 .or_default()
+        //                 .insert(B256::from(slot.to_be_bytes()));
+        //         }
+        //     }
+        //     opcode::EXTCODECOPY
+        //     | opcode::EXTCODEHASH
+        //     | opcode::EXTCODESIZE
+        //     | opcode::BALANCE
+        //     | opcode::SELFDESTRUCT => {
+        //         if let Ok(slot) = interp.stack().peek(0) {
+        //             let addr = Address::from_word(B256::from(slot.to_be_bytes()));
+        //             if !self.excluded.contains(&addr) {
+        //                 self.access_list.entry(addr).or_default();
+        //             }
+        //         }
+        //     }
+        //     opcode::DELEGATECALL | opcode::CALL | opcode::STATICCALL | opcode::CALLCODE => {
+        //         if let Ok(slot) = interp.stack().peek(1) {
+        //             let addr = Address::from_word(B256::from(slot.to_be_bytes()));
+        //             if !self.excluded.contains(&addr) {
+        //                 self.access_list.entry(addr).or_default();
+        //             }
+        //         }
+        //     }
+        //     _ => (),
+        // }
     }
 }

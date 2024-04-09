@@ -10,8 +10,10 @@ use alloy_rpc_trace_types::{
         SelfdestructAction, TraceOutput, TransactionTrace,
     },
 };
-use revm::interpreter::{opcode, CallContext, CallScheme, CreateScheme, InstructionResult, OpCode};
+use revm::interpreter::{CallContext, CallScheme, OpCode};
 use std::collections::VecDeque;
+use fluentbase_types::{ExitCode};
+use revm::primitives::CreateScheme;
 
 /// A trace of a call.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -53,7 +55,7 @@ pub struct CallTrace {
     /// The gas limit of the call
     pub gas_limit: u64,
     /// The status of the trace's call
-    pub status: InstructionResult,
+    pub status: ExitCode,
     /// call context of the runtime
     pub call_context: Option<Box<CallContext>>,
     /// Opcode-level execution steps
@@ -70,28 +72,21 @@ impl CallTrace {
     /// Returns true if the status code is a revert
     #[inline]
     pub fn is_revert(&self) -> bool {
-        self.status == InstructionResult::Revert
+        self.status != ExitCode::Ok
     }
 
     /// Returns the error message if it is an erroneous result.
     pub(crate) fn as_error_msg(&self, kind: TraceStyle) -> Option<String> {
         // See also <https://github.com/ethereum/go-ethereum/blob/34d507215951fb3f4a5983b65e127577989a6db8/eth/tracers/native/call_flat.go#L39-L55>
         self.is_error().then(|| match self.status {
-            InstructionResult::Revert => {
+            ExitCode::Panic => {
                 if kind.is_parity() { "Reverted" } else { "execution reverted" }.to_string()
             }
-            InstructionResult::OutOfGas | InstructionResult::MemoryOOG => {
+            ExitCode::OutOfFuel => {
                 if kind.is_parity() { "Out of gas" } else { "out of gas" }.to_string()
             }
-            InstructionResult::OpcodeNotFound => {
-                if kind.is_parity() { "Bad instruction" } else { "invalid opcode" }.to_string()
-            }
-            InstructionResult::StackOverflow => "Out of stack".to_string(),
-            InstructionResult::InvalidJump => {
-                if kind.is_parity() { "Bad jump destination" } else { "invalid jump destination" }
-                    .to_string()
-            }
-            InstructionResult::PrecompileError => {
+            ExitCode::StackOverflow => "Out of stack".to_string(),
+            ExitCode::PrecompileError => {
                 if kind.is_parity() { "Built-in failed" } else { "precompiled failed" }.to_string()
             }
             status => format!("{:?}", status),
@@ -175,7 +170,7 @@ impl CallTraceNode {
 
     /// Returns the status of the call
     #[inline]
-    pub const fn status(&self) -> InstructionResult {
+    pub const fn status(&self) -> ExitCode {
         self.trace.status
     }
 
@@ -498,7 +493,7 @@ pub struct CallTraceStep {
     /// Final status of the step
     ///
     /// This is set after the step was executed.
-    pub status: InstructionResult,
+    pub status: ExitCode,
 }
 
 // === impl CallTraceStep ===
@@ -542,28 +537,32 @@ impl CallTraceStep {
     /// Returns true if the step is a STOP opcode
     #[inline]
     pub(crate) const fn is_stop(&self) -> bool {
-        matches!(self.op.get(), opcode::STOP)
+        // TODO: "what is stop opcode here?"
+        false
+        // matches!(self.op.get(), opcode::STOP)
     }
 
     /// Returns true if the step is a call operation, any of
     /// CALL, CALLCODE, DELEGATECALL, STATICCALL, CREATE, CREATE2
     #[inline]
     pub(crate) const fn is_calllike_op(&self) -> bool {
-        matches!(
-            self.op.get(),
-            opcode::CALL
-                | opcode::DELEGATECALL
-                | opcode::STATICCALL
-                | opcode::CREATE
-                | opcode::CALLCODE
-                | opcode::CREATE2
-        )
+        //TODO: "what is call-like opcode?"
+        false
+        // matches!(
+        //     self.op.get(),
+        //     opcode::CALL
+        //         | opcode::DELEGATECALL
+        //         | opcode::STATICCALL
+        //         | opcode::CREATE
+        //         | opcode::CALLCODE
+        //         | opcode::CREATE2
+        // )
     }
 
     // Returns true if the status code is an error or revert, See [InstructionResult::Revert]
     #[inline]
     pub(crate) const fn is_error(&self) -> bool {
-        self.status as u8 >= InstructionResult::Revert as u8
+        self.status.into_i32() != ExitCode::Ok.into_i32()
     }
 
     /// Returns the error message if it is an erroneous result.
@@ -672,6 +671,6 @@ mod opcode_serde {
     {
         let op = u8::deserialize(deserializer)?;
         Ok(OpCode::new(op)
-            .unwrap_or_else(|| OpCode::new(revm::interpreter::opcode::INVALID).unwrap()))
+            .expect("unknown opcode value"))
     }
 }

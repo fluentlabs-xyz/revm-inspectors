@@ -1,8 +1,9 @@
 use alloy_primitives::{Address, U256};
 use revm::{
-    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, CreateScheme},
+    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome},
     Database, EvmContext, Inspector,
 };
+use revm::primitives::CreateScheme;
 
 /// An [Inspector] that collects internal ETH transfers.
 ///
@@ -52,7 +53,7 @@ where
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        if self.internal_only && context.journaled_state.depth() == 0 {
+        if self.internal_only && context.depth == 0 {
             // skip top level call
             return None;
         }
@@ -75,7 +76,7 @@ where
         inputs: &CreateInputs,
         outcome: CreateOutcome,
     ) -> CreateOutcome {
-        if self.internal_only && context.journaled_state.depth() == 0 {
+        if self.internal_only && context.depth == 0 {
             return outcome;
         }
         if let Some(address) = outcome.address {

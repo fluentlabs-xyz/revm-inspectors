@@ -8,10 +8,9 @@ use alloy_rpc_trace_types::geth::{
 };
 use revm::{
     db::{CacheDB, EmptyDB},
-    interpreter::CreateScheme,
     primitives::{
         BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ExecutionResult, HandlerCfg,
-        Output, SpecId, TransactTo, TxEnv,
+        Output, SpecId, TransactTo, TxEnv, CreateScheme,
     },
     DatabaseCommit,
 };

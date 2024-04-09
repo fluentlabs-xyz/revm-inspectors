@@ -7,14 +7,13 @@ use crate::tracing::{
     utils::gas_used,
 };
 use alloy_primitives::{Address, Bytes, Log, U256};
+use fluentbase_types::ExitCode;
 use revm::{
     inspectors::GasInspector,
-    interpreter::{
-        opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
-        InstructionResult, Interpreter, InterpreterResult, OpCode,
-    },
+    interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
+    Interpreter, InterpreterResult, OpCode},
     primitives::SpecId,
-    Database, EvmContext, Inspector, JournalEntry,
+    Database, EvmContext, Inspector,
 };
 
 mod arena;
@@ -184,14 +183,11 @@ impl TracingInspector {
     #[inline]
     fn is_precompile_call<DB: Database>(
         &self,
-        context: &EvmContext<DB>,
-        to: &Address,
-        value: U256,
+        _context: &EvmContext<DB>,
+        _to: &Address,
+        _value: U256,
     ) -> bool {
-        if context.precompiles.contains_key(to) {
-            // only if this is _not_ the root call
-            return self.is_deep() && value.is_zero();
-        }
+        // we don't have precompiles for rWASM
         false
     }
 
@@ -268,12 +264,12 @@ impl TracingInspector {
             0,
             push_kind,
             CallTrace {
-                depth: context.journaled_state.depth() as usize,
+                depth: context.depth as usize,
                 address,
                 kind,
                 data: input_data,
                 value,
-                status: InstructionResult::Continue,
+                status: ExitCode::Ok,
                 caller,
                 maybe_precompile,
                 gas_limit,
@@ -320,123 +316,123 @@ impl TracingInspector {
         }
     }
 
-    /// Starts tracking a step
-    ///
-    /// Invoked on [Inspector::step]
-    ///
-    /// # Panics
-    ///
-    /// This expects an existing [CallTrace], in other words, this panics if not within the context
-    /// of a call.
-    fn start_step<DB: Database>(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
-        let trace_idx = self.last_trace_idx();
-        let trace = &mut self.traces.arena[trace_idx];
-
-        self.step_stack.push(StackStep { trace_idx, step_idx: trace.trace.steps.len() });
-
-        let memory = self
-            .config
-            .record_memory_snapshots
-            .then(|| RecordedMemory::new(interp.shared_memory.context_memory().to_vec()))
-            .unwrap_or_default();
-        let stack = if self.config.record_stack_snapshots.is_full() {
-            Some(interp.stack.data().clone())
-        } else {
-            None
-        };
-
-        let op = OpCode::new(interp.current_opcode())
-            .or_else(|| {
-                // if the opcode is invalid, we'll use the invalid opcode to represent it because
-                // this is invoked before the opcode is executed, the evm will eventually return a
-                // `Halt` with invalid/unknown opcode as result
-                let invalid_opcode = 0xfe;
-                OpCode::new(invalid_opcode)
-            })
-            .expect("is valid opcode;");
-
-        trace.trace.steps.push(CallTraceStep {
-            depth: context.journaled_state.depth(),
-            pc: interp.program_counter(),
-            op,
-            contract: interp.contract.address,
-            stack,
-            push_stack: None,
-            memory_size: memory.len(),
-            memory,
-            gas_remaining: self.gas_inspector.gas_remaining(),
-            gas_refund_counter: interp.gas.refunded() as u64,
-
-            // fields will be populated end of call
-            gas_cost: 0,
-            storage_change: None,
-            status: InstructionResult::Continue,
-        });
-    }
-
-    /// Fills the current trace with the output of a step.
-    ///
-    /// Invoked on [Inspector::step_end].
-    fn fill_step_on_step_end<DB: Database>(
-        &mut self,
-        interp: &Interpreter,
-        context: &EvmContext<DB>,
-    ) {
-        let StackStep { trace_idx, step_idx } =
-            self.step_stack.pop().expect("can't fill step without starting a step first");
-        let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
-
-        if self.config.record_stack_snapshots.is_pushes() {
-            let num_pushed = stack_push_count(step.op);
-            let start = interp.stack.len() - num_pushed;
-            step.push_stack = Some(interp.stack.data()[start..].to_vec());
-        }
-
-        if self.config.record_memory_snapshots {
-            // resize memory so opcodes that allocated memory is correctly displayed
-            if interp.shared_memory.len() > step.memory.len() {
-                step.memory.resize(interp.shared_memory.len());
-            }
-        }
-        if self.config.record_state_diff {
-            let op = step.op.get();
-
-            let journal_entry = context
-                .journaled_state
-                .journal
-                .last()
-                // This should always work because revm initializes it as `vec![vec![]]`
-                // See [JournaledState::new](revm::JournaledState)
-                .expect("exists; initialized with vec")
-                .last();
-
-            step.storage_change = match (op, journal_entry) {
-                (
-                    opcode::SLOAD | opcode::SSTORE,
-                    Some(JournalEntry::StorageChange { address, key, had_value }),
-                ) => {
-                    // SAFETY: (Address,key) exists if part if StorageChange
-                    let value = context.journaled_state.state[address].storage[key].present_value();
-                    let reason = match op {
-                        opcode::SLOAD => StorageChangeReason::SLOAD,
-                        opcode::SSTORE => StorageChangeReason::SSTORE,
-                        _ => unreachable!(),
-                    };
-                    let change = StorageChange { key: *key, value, had_value: *had_value, reason };
-                    Some(change)
-                }
-                _ => None,
-            };
-        }
-
-        // The gas cost is the difference between the recorded gas remaining at the start of the
-        // step the remaining gas here, at the end of the step.
-        // TODO: Figure out why this can overflow. https://github.com/paradigmxyz/evm-inspectors/pull/38
-        step.gas_cost = step.gas_remaining.saturating_sub(self.gas_inspector.gas_remaining());
-
-        // set the status
-        step.status = interp.instruction_result;
-    }
+    // /// Starts tracking a step
+    // ///
+    // /// Invoked on [Inspector::step]
+    // ///
+    // /// # Panics
+    // ///
+    // /// This expects an existing [CallTrace], in other words, this panics if not within the context
+    // /// of a call.
+    // fn start_step<DB: Database>(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    //     let trace_idx = self.last_trace_idx();
+    //     let trace = &mut self.traces.arena[trace_idx];
+    //
+    //     self.step_stack.push(StackStep { trace_idx, step_idx: trace.trace.steps.len() });
+    //
+    //     let memory = self
+    //         .config
+    //         .record_memory_snapshots
+    //         .then(|| RecordedMemory::new(interp.shared_memory.context_memory().to_vec()))
+    //         .unwrap_or_default();
+    //     let stack = if self.config.record_stack_snapshots.is_full() {
+    //         Some(interp.stack.data().clone())
+    //     } else {
+    //         None
+    //     };
+    //
+    //     let op = OpCode::new(interp.current_opcode())
+    //         .or_else(|| {
+    //             // if the opcode is invalid, we'll use the invalid opcode to represent it because
+    //             // this is invoked before the opcode is executed, the evm will eventually return a
+    //             // `Halt` with invalid/unknown opcode as result
+    //             let invalid_opcode = 0xfe;
+    //             OpCode::new(invalid_opcode)
+    //         })
+    //         .expect("is valid opcode;");
+    //
+    //     trace.trace.steps.push(CallTraceStep {
+    //         depth: context.journaled_state.depth(),
+    //         pc: interp.program_counter(),
+    //         op,
+    //         contract: interp.contract.address,
+    //         stack,
+    //         push_stack: None,
+    //         memory_size: memory.len(),
+    //         memory,
+    //         gas_remaining: self.gas_inspector.gas_remaining(),
+    //         gas_refund_counter: interp.gas.refunded() as u64,
+    //
+    //         // fields will be populated end of call
+    //         gas_cost: 0,
+    //         storage_change: None,
+    //         status: ExitCode::Ok,
+    //     });
+    // }
+    //
+    // /// Fills the current trace with the output of a step.
+    // ///
+    // /// Invoked on [Inspector::step_end].
+    // fn fill_step_on_step_end<DB: Database>(
+    //     &mut self,
+    //     interp: &Interpreter,
+    //     context: &EvmContext<DB>,
+    // ) {
+    //     let StackStep { trace_idx, step_idx } =
+    //         self.step_stack.pop().expect("can't fill step without starting a step first");
+    //     let step = &mut self.traces.arena[trace_idx].trace.steps[step_idx];
+    //
+    //     if self.config.record_stack_snapshots.is_pushes() {
+    //         let num_pushed = stack_push_count(step.op);
+    //         let start = interp.stack.len() - num_pushed;
+    //         step.push_stack = Some(interp.stack.data()[start..].to_vec());
+    //     }
+    //
+    //     if self.config.record_memory_snapshots {
+    //         // resize memory so opcodes that allocated memory is correctly displayed
+    //         if interp.shared_memory.len() > step.memory.len() {
+    //             step.memory.resize(interp.shared_memory.len());
+    //         }
+    //     }
+    //     if self.config.record_state_diff {
+    //         let op = step.op.get();
+    //
+    //         let journal_entry = context
+    //             .journaled_state
+    //             .journal
+    //             .last()
+    //             // This should always work because revm initializes it as `vec![vec![]]`
+    //             // See [JournaledState::new](revm::JournaledState)
+    //             .expect("exists; initialized with vec")
+    //             .last();
+    //
+    //         step.storage_change = match (op, journal_entry) {
+    //             (
+    //                 opcode::SLOAD | opcode::SSTORE,
+    //                 Some(JournalEntry::StorageChange { address, key, had_value }),
+    //             ) => {
+    //                 // SAFETY: (Address,key) exists if part if StorageChange
+    //                 let value = context.journaled_state.state[address].storage[key].present_value();
+    //                 let reason = match op {
+    //                     opcode::SLOAD => StorageChangeReason::SLOAD,
+    //                     opcode::SSTORE => StorageChangeReason::SSTORE,
+    //                     _ => unreachable!(),
+    //                 };
+    //                 let change = StorageChange { key: *key, value, had_value: *had_value, reason };
+    //                 Some(change)
+    //             }
+    //             _ => None,
+    //         };
+    //     }
+    //
+    //     // The gas cost is the difference between the recorded gas remaining at the start of the
+    //     // step the remaining gas here, at the end of the step.
+    //     // TODO: Figure out why this can overflow. https://github.com/paradigmxyz/evm-inspectors/pull/38
+    //     step.gas_cost = step.gas_remaining.saturating_sub(self.gas_inspector.gas_remaining());
+    //
+    //     // set the status
+    //     step.status = interp.instruction_result;
+    // }
 }
 
 impl<DB> Inspector<DB> for TracingInspector
@@ -451,14 +447,14 @@ where
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         if self.config.record_steps {
             self.gas_inspector.step(interp, context);
-            self.start_step(interp, context);
+            // self.start_step(interp, context);
         }
     }
 
     fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         if self.config.record_steps {
             self.gas_inspector.step_end(interp, context);
-            self.fill_step_on_step_end(interp, context);
+            // self.fill_step_on_step_end(interp, context);
         }
     }
 
@@ -540,11 +536,12 @@ where
     ) -> Option<CreateOutcome> {
         self.gas_inspector.create(context, inputs);
 
-        let _ = context.load_account(inputs.caller);
-        let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+        // let _ = context.load_account(inputs.caller);
+        // let nonce = context.account(inputs.caller).info.nonce;
+        todo!("what to do with nonce?");
         self.start_trace_on_call(
             context,
-            inputs.created_address(nonce),
+            inputs.created_address(0),
             inputs.init_code.clone(),
             inputs.value,
             inputs.scheme.into(),
