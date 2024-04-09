@@ -20,13 +20,13 @@ use boa_engine::{
 use boa_gc::{empty_trace, Finalize, Trace};
 use revm::{
     interpreter::{
-        opcode::{PUSH0, PUSH32},
-        OpCode, SharedMemory, Stack,
+        OpCode, SharedMemory,
     },
     primitives::{AccountInfo, Bytecode, State, KECCAK_EMPTY},
     DatabaseRef,
 };
 use std::{cell::RefCell, rc::Rc};
+use revm::interpreter::Stack;
 
 /// A macro that creates a native function that returns via [JsValue::from]
 macro_rules! js_value_getter {
@@ -363,7 +363,7 @@ impl OpObj {
     pub(crate) fn into_js_object(self, context: &mut Context) -> JsResult<JsObject> {
         let obj = JsObject::default();
         let value = self.0;
-        let is_push = (PUSH0..=PUSH32).contains(&value);
+        let is_push = false; //TODO: "(PUSH0..=PUSH32).contains(&value)"
 
         let to_number = FunctionObjectBuilder::new(
             context.realm(),

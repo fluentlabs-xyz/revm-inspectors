@@ -14,11 +14,11 @@ pub use boa_engine::vm::RuntimeLimits;
 use boa_engine::{js_string, Context, JsError, JsObject, JsResult, JsValue, Source};
 use revm::{
     interpreter::{
-        return_revert, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
         InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{Env, ExecutionResult, Output, ResultAndState, TransactTo},
-    ContextPrecompiles, Database, DatabaseRef, EvmContext, Inspector,
+    Database, DatabaseRef, EvmContext, Inspector,
 };
 
 pub(crate) mod bindings;
@@ -363,18 +363,6 @@ impl JsInspector {
         self.call_stack.push(call);
         self.active_call()
     }
-
-    /// Registers the precompiles in the JS context
-    fn register_precompiles<DB: Database>(&mut self, precompiles: &ContextPrecompiles<DB>) {
-        if !self.precompiles_registered {
-            return;
-        }
-        let precompiles = PrecompileList(precompiles.addresses().copied().collect());
-
-        let _ = precompiles.register_callable(&mut self.ctx);
-
-        self.precompiles_registered = true
-    }
 }
 
 impl<DB> Inspector<DB> for JsInspector
@@ -383,57 +371,57 @@ where
     <DB as DatabaseRef>::Error: std::fmt::Display,
 {
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
-        if self.step_fn.is_none() {
-            return;
-        }
-
-        let (db, _db_guard) = EvmDbRef::new(&context.journaled_state.state, &context.db);
-
-        let (stack, _stack_guard) = StackRef::new(&interp.stack);
-        let (memory, _memory_guard) = MemoryRef::new(&interp.shared_memory);
-        let step = StepLog {
-            stack,
-            op: interp.current_opcode().into(),
-            memory,
-            pc: interp.program_counter() as u64,
-            gas_remaining: interp.gas.remaining(),
-            cost: interp.gas.spend(),
-            depth: context.journaled_state.depth(),
-            refund: interp.gas.refunded() as u64,
-            error: None,
-            contract: self.active_call().contract.clone(),
-        };
-
-        if self.try_step(step, db).is_err() {
-            interp.instruction_result = InstructionResult::Revert;
-        }
+        // if self.step_fn.is_none() {
+        //     return;
+        // }
+        //
+        // let (db, _db_guard) = EvmDbRef::new(&context.state, &context.db);
+        //
+        // let (stack, _stack_guard) = StackRef::new(&interp.stack);
+        // let (memory, _memory_guard) = MemoryRef::new(&interp.shared_memory);
+        // let step = StepLog {
+        //     stack,
+        //     op: interp.current_opcode().into(),
+        //     memory,
+        //     pc: interp.program_counter() as u64,
+        //     gas_remaining: interp.gas.remaining(),
+        //     cost: interp.gas.spend(),
+        //     depth: context.journaled_state.depth(),
+        //     refund: interp.gas.refunded() as u64,
+        //     error: None,
+        //     contract: self.active_call().contract.clone(),
+        // };
+        //
+        // if self.try_step(step, db).is_err() {
+        //     interp.instruction_result = InstructionResult::Revert;
+        // }
     }
 
     fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
-        if self.step_fn.is_none() {
-            return;
-        }
-
-        if matches!(interp.instruction_result, return_revert!()) {
-            let (db, _db_guard) = EvmDbRef::new(&context.journaled_state.state, &context.db);
-
-            let (stack, _stack_guard) = StackRef::new(&interp.stack);
-            let (memory, _memory_guard) = MemoryRef::new(&interp.shared_memory);
-            let step = StepLog {
-                stack,
-                op: interp.current_opcode().into(),
-                memory,
-                pc: interp.program_counter() as u64,
-                gas_remaining: interp.gas.remaining(),
-                cost: interp.gas.spend(),
-                depth: context.journaled_state.depth(),
-                refund: interp.gas.refunded() as u64,
-                error: Some(format!("{:?}", interp.instruction_result)),
-                contract: self.active_call().contract.clone(),
-            };
-
-            let _ = self.try_fault(step, db);
-        }
+        // if self.step_fn.is_none() {
+        //     return;
+        // }
+        //
+        // if matches!(interp.instruction_result, return_revert!()) {
+        //     let (db, _db_guard) = EvmDbRef::new(&context.journaled_state.state, &context.db);
+        //
+        //     let (stack, _stack_guard) = StackRef::new(&interp.stack);
+        //     let (memory, _memory_guard) = MemoryRef::new(&interp.shared_memory);
+        //     let step = StepLog {
+        //         stack,
+        //         op: interp.current_opcode().into(),
+        //         memory,
+        //         pc: interp.program_counter() as u64,
+        //         gas_remaining: interp.gas.remaining(),
+        //         cost: interp.gas.spend(),
+        //         depth: context.journaled_state.depth(),
+        //         refund: interp.gas.refunded() as u64,
+        //         error: Some(format!("{:?}", interp.instruction_result)),
+        //         contract: self.active_call().contract.clone(),
+        //     };
+        //
+        //     let _ = self.try_fault(step, db);
+        // }
     }
 
     fn log(&mut self, _context: &mut EvmContext<DB>, _log: &Log) {}
@@ -443,8 +431,6 @@ where
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
-        self.register_precompiles(&context.precompiles);
-
         // determine correct `from` and `to` based on the call scheme
         let (from, to) = match inputs.context.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
@@ -506,28 +492,26 @@ where
         context: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
-        self.register_precompiles(&context.precompiles);
-
-        let _ = context.load_account(inputs.caller);
-        let nonce = context.journaled_state.account(inputs.caller).info.nonce;
-        let address = inputs.created_address(nonce);
-        self.push_call(
-            address,
-            inputs.init_code.clone(),
-            inputs.value,
-            inputs.scheme.into(),
-            inputs.caller,
-            inputs.gas_limit,
-        );
-
-        if self.can_call_enter() {
-            let call = self.active_call();
-            let frame =
-                CallFrame { contract: call.contract.clone(), kind: call.kind, gas: call.gas_limit };
-            if let Err(err) = self.try_enter(frame) {
-                return Some(CreateOutcome::new(js_error_to_revert(err), None));
-            }
-        }
+        // let _ = context.load_account(inputs.caller);
+        // let nonce = context.journaled_state.account(inputs.caller).info.nonce;
+        // let address = inputs.created_address(nonce);
+        // self.push_call(
+        //     address,
+        //     inputs.init_code.clone(),
+        //     inputs.value,
+        //     inputs.scheme.into(),
+        //     inputs.caller,
+        //     inputs.gas_limit,
+        // );
+        //
+        // if self.can_call_enter() {
+        //     let call = self.active_call();
+        //     let frame =
+        //         CallFrame { contract: call.contract.clone(), kind: call.kind, gas: call.gas_limit };
+        //     if let Err(err) = self.try_enter(frame) {
+        //         return Some(CreateOutcome::new(js_error_to_revert(err), None));
+        //     }
+        // }
 
         None
     }
@@ -658,7 +642,7 @@ pub enum JsInspectorError {
 #[inline]
 fn js_error_to_revert(err: JsError) -> InterpreterResult {
     InterpreterResult {
-        result: InstructionResult::Revert,
+        result: InstructionResult::Panic,
         output: err.to_string().into(),
         gas: Gas::new(0),
     }
