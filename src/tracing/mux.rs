@@ -8,9 +8,10 @@ use alloy_rpc_trace_types::geth::{
 use revm::{
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
     primitives::ResultAndState,
-    Database, DatabaseRef, EvmContext, Inspector,
+    EvmContext, Inspector,
 };
 use std::collections::HashMap;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use thiserror::Error;
 
 /// Mux tracing inspector that runs and collects results of multiple inspectors at once.
@@ -34,11 +35,11 @@ impl MuxInspector {
     }
 
     /// Try converting this [MuxInspector] into a [MuxFrame].
-    pub fn try_into_mux_frame<DB: DatabaseRef>(
+    pub fn try_into_mux_frame<DB: IJournaledTrie>(
         self,
         result: &ResultAndState,
         db: &DB,
-    ) -> Result<MuxFrame, DB::Error> {
+    ) -> Result<MuxFrame, ExitCode> {
         let mut frame = HashMap::with_capacity(self.0.len());
         for (tracer_type, inspector) in self.0 {
             let trace = match inspector {
@@ -65,7 +66,7 @@ impl MuxInspector {
 
 impl<DB> Inspector<DB> for MuxInspector
 where
-    DB: Database,
+    DB: IJournaledTrie,
 {
     #[inline]
     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
@@ -227,7 +228,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn initialize_interp<DB: Database>(
+    fn initialize_interp<DB: IJournaledTrie>(
         &mut self,
         interp: &mut Interpreter,
         context: &mut EvmContext<DB>,
@@ -246,7 +247,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn step<DB: Database>(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step<DB: IJournaledTrie>(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         match self {
             DelegatingInspector::FourByte(inspector) => inspector.step(interp, context),
             DelegatingInspector::Call(_, inspector) => inspector.step(interp, context),
@@ -257,7 +258,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn step_end<DB: Database>(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
+    fn step_end<DB: IJournaledTrie>(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         match self {
             DelegatingInspector::FourByte(inspector) => inspector.step_end(interp, context),
             DelegatingInspector::Call(_, inspector) => inspector.step_end(interp, context),
@@ -268,7 +269,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn log<DB: Database>(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+    fn log<DB: IJournaledTrie>(&mut self, context: &mut EvmContext<DB>, log: &Log) {
         match self {
             DelegatingInspector::FourByte(inspector) => inspector.log(context, log),
             DelegatingInspector::Call(_, inspector) => inspector.log(context, log),
@@ -279,7 +280,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn call<DB: Database>(
+    fn call<DB: IJournaledTrie>(
         &mut self,
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
@@ -296,7 +297,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn call_end<DB: Database>(
+    fn call_end<DB: IJournaledTrie>(
         &mut self,
         context: &mut EvmContext<DB>,
         inputs: &CallInputs,
@@ -316,7 +317,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn create<DB: Database>(
+    fn create<DB: IJournaledTrie>(
         &mut self,
         context: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
@@ -333,7 +334,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn create_end<DB: Database>(
+    fn create_end<DB: IJournaledTrie>(
         &mut self,
         context: &mut EvmContext<DB>,
         inputs: &CreateInputs,
@@ -355,7 +356,7 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn selfdestruct<DB: Database>(&mut self, contract: Address, target: Address, value: U256) {
+    fn selfdestruct<DB: IJournaledTrie>(&mut self, contract: Address, target: Address, value: U256) {
         match self {
             DelegatingInspector::FourByte(inspector) => {
                 <FourByteInspector as Inspector<DB>>::selfdestruct(

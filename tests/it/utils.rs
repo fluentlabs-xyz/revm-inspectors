@@ -1,20 +1,15 @@
 use alloy_primitives::{Address, Bytes, U256};
 use colorchoice::ColorChoice;
-use revm::{
-    db::{CacheDB, EmptyDB},
-    inspector_handle_register,
-    primitives::{
-        BlockEnv, CreateScheme, EVMError, Env, EnvWithHandlerCfg, ExecutionResult, HandlerCfg,
-        Output, ResultAndState, SpecId, TransactTo, TxEnv,
-    },
-    Database, DatabaseCommit, GetInspector,
-};
+use revm::{db::{CacheDB}, inspector_handle_register, primitives::{
+    BlockEnv, CreateScheme, EVMError, Env, EnvWithHandlerCfg, ExecutionResult, HandlerCfg,
+    Output, ResultAndState, SpecId, TransactTo, TxEnv,
+}, Database, DatabaseCommit, GetInspector, SetGenericStage};
 use revm_inspectors::tracing::TracingInspector;
-use std::convert::Infallible;
+use fluentbase_types::{EmptyJournalTrie, ExitCode, IJournaledTrie};
 
-type TestDb = CacheDB<EmptyDB>;
+type TestDb = EmptyJournalTrie;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TestEvm {
     pub db: TestDb,
     pub env: EnvWithHandlerCfg,
@@ -28,7 +23,7 @@ impl Default for TestEvm {
 
 impl TestEvm {
     pub fn new() -> Self {
-        let db = CacheDB::new(EmptyDB::default());
+        let db = EmptyJournalTrie::default();
         let env = EnvWithHandlerCfg::new(
             Box::new(Env {
                 block: BlockEnv { gas_limit: U256::MAX, ..Default::default() },
@@ -40,16 +35,16 @@ impl TestEvm {
         Self { db, env }
     }
 
-    pub fn deploy<I: for<'a> GetInspector<&'a mut TestDb>>(
+    pub fn deploy<I: for<'a> GetInspector<TestDb>>(
         &mut self,
         data: Bytes,
         inspector: I,
-    ) -> Result<Address, EVMError<Infallible>> {
+    ) -> Result<Address, EVMError<ExitCode>> {
         self.env.tx.data = data;
         self.env.tx.transact_to = TransactTo::Create(CreateScheme::Create);
 
         let (ResultAndState { result, state }, env) = self.inspect(inspector)?;
-        self.db.commit(state);
+        self.db.commit().unwrap();
         let address = match result {
             ExecutionResult::Success { output, .. } => match output {
                 Output::Create(_, address) => address.unwrap(),
@@ -61,25 +56,25 @@ impl TestEvm {
         Ok(address)
     }
 
-    pub fn call<I: for<'a> GetInspector<&'a mut TestDb>>(
+    pub fn call<I: for<'a> GetInspector<TestDb>>(
         &mut self,
         address: Address,
         data: Bytes,
         inspector: I,
-    ) -> Result<ExecutionResult, EVMError<Infallible>> {
+    ) -> Result<ExecutionResult, EVMError<ExitCode>> {
         self.env.tx.data = data;
         self.env.tx.transact_to = TransactTo::Call(address);
         let (ResultAndState { result, state }, env) = self.inspect(inspector)?;
-        self.db.commit(state);
+        self.db.commit().unwrap();
         self.env = env;
         Ok(result)
     }
 
-    pub fn inspect<I: for<'a> GetInspector<&'a mut TestDb>>(
+    pub fn inspect<I: for<'a> GetInspector<TestDb>>(
         &mut self,
         inspector: I,
-    ) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<Infallible>> {
-        inspect(&mut self.db, self.env.clone(), inspector)
+    ) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<ExitCode>> {
+        inspect(self.db.clone(), self.env.clone(), inspector)
     }
 }
 
@@ -88,12 +83,12 @@ pub fn inspect<DB, I>(
     db: DB,
     env: EnvWithHandlerCfg,
     inspector: I,
-) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<DB::Error>>
+) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<ExitCode>>
 where
-    DB: Database,
+    DB: IJournaledTrie + Default,
     I: GetInspector<DB>,
 {
-    let mut evm = revm::Evm::builder()
+    let mut evm = revm::EvmBuilder::<SetGenericStage, (), DB>::default()
         .with_db(db)
         .with_external_context(inspector)
         .with_env_with_handler_cfg(env)

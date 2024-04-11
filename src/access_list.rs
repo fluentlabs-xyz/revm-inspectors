@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, B256};
 use alloy_rpc_types::{AccessList, AccessListItem};
-use revm::{Database, EvmContext, Inspector, interpreter::Interpreter};
+use revm::{EvmContext, Inspector, interpreter::Interpreter};
 use std::collections::{BTreeSet, HashMap, HashSet};
+use fluentbase_types::IJournaledTrie;
 
 /// An [Inspector] that collects touched accounts and storage slots.
 ///
@@ -57,7 +58,7 @@ impl AccessListInspector {
 
 impl<DB> Inspector<DB> for AccessListInspector
 where
-    DB: Database,
+    DB: IJournaledTrie,
 {
     fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         // match interp.current_opcode() {

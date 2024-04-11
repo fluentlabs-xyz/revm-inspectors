@@ -1,17 +1,16 @@
-use self::parity::stack_push_count;
 use crate::tracing::{
     arena::PushTraceKind,
     types::{
-        CallKind, CallTraceNode, LogCallOrder, RecordedMemory, StorageChange, StorageChangeReason,
+        CallKind, CallTraceNode, LogCallOrder,
     },
     utils::gas_used,
 };
 use alloy_primitives::{Address, Bytes, Log, U256};
-use fluentbase_types::ExitCode;
+use fluentbase_types::{ExitCode, IJournaledTrie};
 use revm::{
     inspectors::GasInspector,
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
-    Interpreter, InterpreterResult, OpCode},
+    Interpreter, InterpreterResult},
     primitives::SpecId,
     Database, EvmContext, Inspector,
 };
@@ -35,7 +34,7 @@ mod opcount;
 pub use opcount::OpcodeCountInspector;
 
 pub mod types;
-use types::{CallTrace, CallTraceStep};
+use types::{CallTrace};
 
 mod utils;
 
@@ -181,7 +180,7 @@ impl TracingInspector {
     ///
     /// Returns true if the `to` address is a precompile contract and the value is zero.
     #[inline]
-    fn is_precompile_call<DB: Database>(
+    fn is_precompile_call<DB: IJournaledTrie>(
         &self,
         _context: &EvmContext<DB>,
         _to: &Address,
@@ -228,7 +227,7 @@ impl TracingInspector {
     ///
     /// Invoked on [Inspector::call].
     #[allow(clippy::too_many_arguments)]
-    fn start_trace_on_call<DB: Database>(
+    fn start_trace_on_call<DB: IJournaledTrie>(
         &mut self,
         context: &EvmContext<DB>,
         address: Address,
@@ -285,7 +284,7 @@ impl TracingInspector {
     /// # Panics
     ///
     /// This expects an existing trace [Self::start_trace_on_call]
-    fn fill_trace_on_call_end<DB: Database>(
+    fn fill_trace_on_call_end<DB: IJournaledTrie>(
         &mut self,
         context: &mut EvmContext<DB>,
         result: InterpreterResult,
@@ -437,7 +436,7 @@ impl TracingInspector {
 
 impl<DB> Inspector<DB> for TracingInspector
 where
-    DB: Database,
+    DB: IJournaledTrie,
 {
     #[inline]
     fn initialize_interp(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {

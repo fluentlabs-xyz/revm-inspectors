@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, U256};
+use fluentbase_types::IJournaledTrie;
 use revm::{
     interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome},
-    Database, EvmContext, Inspector,
+    EvmContext, Inspector,
 };
 use revm::primitives::CreateScheme;
 
@@ -46,7 +47,7 @@ impl TransferInspector {
 
 impl<DB> Inspector<DB> for TransferInspector
 where
-    DB: Database,
+    DB: IJournaledTrie,
 {
     fn call(
         &mut self,
