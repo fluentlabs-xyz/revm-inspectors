@@ -12,6 +12,7 @@ use crate::tracing::{
 use alloy_primitives::{Address, Bytes, Log, B256, U256};
 pub use boa_engine::vm::RuntimeLimits;
 use boa_engine::{js_string, Context, JsError, JsObject, JsResult, JsValue, Source};
+use fluentbase_types::IJournaledTrie;
 use revm::{
     interpreter::{
         CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
@@ -367,7 +368,7 @@ impl JsInspector {
 
 impl<DB> Inspector<DB> for JsInspector
 where
-    DB: Database + DatabaseRef,
+    DB: IJournaledTrie,
     <DB as DatabaseRef>::Error: std::fmt::Display,
 {
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
