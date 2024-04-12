@@ -10,7 +10,7 @@ use revm::{
     Database, DatabaseCommit, GetInspector,
 };
 use revm_inspectors::tracing::TracingInspector;
-use std::convert::Infallible;
+use fluentbase_types::ExitCode;
 
 type TestDb = CacheDB<EmptyDB>;
 
@@ -44,7 +44,7 @@ impl TestEvm {
         &mut self,
         data: Bytes,
         inspector: I,
-    ) -> Result<Address, EVMError<Infallible>> {
+    ) -> Result<Address, EVMError<ExitCode>> {
         self.env.tx.data = data;
         self.env.tx.transact_to = TransactTo::Create(CreateScheme::Create);
 
@@ -66,7 +66,7 @@ impl TestEvm {
         address: Address,
         data: Bytes,
         inspector: I,
-    ) -> Result<ExecutionResult, EVMError<Infallible>> {
+    ) -> Result<ExecutionResult, EVMError<ExitCode>> {
         self.env.tx.data = data;
         self.env.tx.transact_to = TransactTo::Call(address);
         let (ResultAndState { result, state }, env) = self.inspect(inspector)?;
@@ -78,7 +78,7 @@ impl TestEvm {
     pub fn inspect<I: for<'a> GetInspector<&'a mut TestDb>>(
         &mut self,
         inspector: I,
-    ) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<Infallible>> {
+    ) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<ExitCode>> {
         inspect(&mut self.db, self.env.clone(), inspector)
     }
 }
@@ -88,7 +88,7 @@ pub fn inspect<DB, I>(
     db: DB,
     env: EnvWithHandlerCfg,
     inspector: I,
-) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<DB::Error>>
+) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<ExitCode>>
 where
     DB: Database,
     I: GetInspector<DB>,
