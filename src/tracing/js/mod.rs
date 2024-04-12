@@ -369,6 +369,7 @@ impl JsInspector {
 impl<DB> Inspector<DB> for JsInspector
 where
     DB: IJournaledTrie,
+    <DB as DatabaseRef>::Error: std::fmt::Display,
 {
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         // if self.step_fn.is_none() {
