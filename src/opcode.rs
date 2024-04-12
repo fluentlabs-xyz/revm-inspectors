@@ -1,7 +1,6 @@
 use alloy_rpc_trace_types::opcode::OpcodeGas;
-use revm::{EvmContext, Inspector, interpreter::Interpreter, interpreter::OpCode};
+use revm::{Database, EvmContext, Inspector, interpreter::Interpreter, interpreter::OpCode};
 use std::collections::HashMap;
-use fluentbase_types::IJournaledTrie;
 
 /// An Inspector that counts opcodes and measures gas usage per opcode.
 #[derive(Clone, Debug, Default)]
@@ -54,7 +53,7 @@ impl OpcodeGasInspector {
 
 impl<DB> Inspector<DB> for OpcodeGasInspector
 where
-    DB: IJournaledTrie,
+    DB: Database,
 {
     fn step(&mut self, interp: &mut Interpreter, _context: &mut EvmContext<DB>) {
         let opcode_value = interp.current_opcode();

@@ -3,7 +3,6 @@
 use crate::utils::{inspect, print_traces};
 use alloy_primitives::{hex, Address};
 use alloy_rpc_types::TransactionInfo;
-use fluentbase_types::{EmptyJournalTrie, IJournaledTrie};
 use revm::{
     db::{CacheDB, EmptyDB},
     primitives::{
@@ -29,7 +28,7 @@ fn test_parity_selfdestruct() {
 
     let deployer = Address::ZERO;
 
-    let db = EmptyJournalTrie::default();
+    let mut db = CacheDB::new(EmptyDB::default());
 
     let cfg = CfgEnvWithHandlerCfg::new(CfgEnv::default(), HandlerCfg::new(SpecId::LONDON));
 
@@ -47,7 +46,7 @@ fn test_parity_selfdestruct() {
 
     let mut insp = TracingInspector::new(TracingInspectorConfig::default_parity());
 
-    let (res, _) = inspect(db.clone(), env, &mut insp).unwrap();
+    let (res, _) = inspect(&mut db, env, &mut insp).unwrap();
     let addr = match res.result {
         ExecutionResult::Success { output, .. } => match output {
             Output::Create(_, addr) => addr.unwrap(),
@@ -55,7 +54,7 @@ fn test_parity_selfdestruct() {
         },
         _ => panic!("Execution failed"),
     };
-    db.commit().unwrap();
+    db.commit(res.state);
 
     let mut insp = TracingInspector::new(TracingInspectorConfig::default_parity());
 
@@ -71,7 +70,7 @@ fn test_parity_selfdestruct() {
         },
     );
 
-    let (res, _) = inspect(db.clone(), env, &mut insp).unwrap();
+    let (res, _) = inspect(&mut db, env, &mut insp).unwrap();
     assert!(res.result.is_success());
 
     let traces = insp
@@ -105,7 +104,7 @@ fn test_parity_constructor_selfdestruct() {
 
     let deployer = Address::ZERO;
 
-    let db = EmptyJournalTrie::default();
+    let mut db = CacheDB::new(EmptyDB::default());
 
     let cfg = CfgEnvWithHandlerCfg::new(CfgEnv::default(), HandlerCfg::new(SpecId::LONDON));
 
@@ -122,7 +121,7 @@ fn test_parity_constructor_selfdestruct() {
     );
 
     let mut insp = TracingInspector::new(TracingInspectorConfig::default_parity());
-    let (res, _) = inspect(db.clone(), env, &mut insp).unwrap();
+    let (res, _) = inspect(&mut db, env, &mut insp).unwrap();
     let addr = match res.result {
         ExecutionResult::Success { output, .. } => match output {
             Output::Create(_, addr) => addr.unwrap(),
@@ -130,7 +129,7 @@ fn test_parity_constructor_selfdestruct() {
         },
         _ => panic!("Execution failed"),
     };
-    db.commit().unwrap();
+    db.commit(res.state);
     print_traces(&insp);
 
     let mut insp = TracingInspector::new(TracingInspectorConfig::default_parity());
@@ -147,7 +146,7 @@ fn test_parity_constructor_selfdestruct() {
         },
     );
 
-    let (res, _) = inspect(db.clone(), env, &mut insp).unwrap();
+    let (res, _) = inspect(&mut db, env, &mut insp).unwrap();
     assert!(res.result.is_success());
     print_traces(&insp);
 

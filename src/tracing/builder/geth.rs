@@ -2,16 +2,16 @@
 
 use crate::tracing::{
     types::{CallTraceNode, CallTraceStepStackItem},
+    utils::load_account_code,
     TracingInspectorConfig,
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_rpc_trace_types::geth::{
-    AccountChangeKind, AccountState, CallConfig, CallFrame, DefaultFrame,
-    GethDefaultTracingOptions, PreStateConfig, PreStateFrame, StructLog,
+    AccountChangeKind, AccountState, CallConfig, CallFrame, DefaultFrame, DiffMode,
+    GethDefaultTracingOptions, PreStateConfig, PreStateFrame, PreStateMode, StructLog,
 };
-use revm::{primitives::ResultAndState};
+use revm::{db::DatabaseRef, primitives::ResultAndState};
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use fluentbase_types::{ExitCode, IJournaledTrie};
 
 /// A type for creating geth style traces
 #[derive(Clone, Debug)]
@@ -198,81 +198,80 @@ impl GethTraceBuilder {
     /// * `state` - The state post-transaction execution.
     /// * `diff_mode` - if prestate is in diff or prestate mode.
     /// * `db` - The database to fetch state pre-transaction execution.
-    pub fn geth_prestate_traces<DB: IJournaledTrie>(
+    pub fn geth_prestate_traces<DB: DatabaseRef>(
         &self,
         ResultAndState { state, .. }: &ResultAndState,
         prestate_config: PreStateConfig,
-        db: &DB,
-    ) -> Result<PreStateFrame, ExitCode> {
-        todo!("not implemented")
-        // let account_diffs = state.iter().map(|(addr, acc)| (*addr, acc));
-        //
-        // if prestate_config.is_default_mode() {
-        //     let mut prestate = PreStateMode::default();
-        //     // we only want changed accounts for things like balance changes etc
-        //     for (addr, changed_acc) in account_diffs {
-        //         let db_acc = db.basic_ref(addr)?.unwrap_or_default();
-        //         let code = load_account_code(&db, &db_acc);
-        //         let mut acc_state =
-        //             AccountState::from_account_info(db_acc.nonce, db_acc.balance, code);
-        //
-        //         // insert the original value of all modified storage slots
-        //         for (key, slot) in changed_acc.storage.iter() {
-        //             acc_state.storage.insert((*key).into(), slot.previous_or_original_value.into());
-        //         }
-        //
-        //         prestate.0.insert(addr, acc_state);
-        //     }
-        //
-        //     Ok(PreStateFrame::Default(prestate))
-        // } else {
-        //     let mut state_diff = DiffMode::default();
-        //     let mut account_change_kinds = HashMap::with_capacity(account_diffs.len());
-        //     for (addr, changed_acc) in account_diffs {
-        //         let db_acc = db.basic_ref(addr)?.unwrap_or_default();
-        //
-        //         let pre_code = load_account_code(&db, &db_acc);
-        //
-        //         let mut pre_state =
-        //             AccountState::from_account_info(db_acc.nonce, db_acc.balance, pre_code);
-        //
-        //         let mut post_state = AccountState::from_account_info(
-        //             changed_acc.info.nonce,
-        //             changed_acc.info.balance,
-        //             changed_acc.info.code.as_ref().map(|code| code.original_bytes()),
-        //         );
-        //
-        //         // handle storage changes
-        //         for (key, slot) in changed_acc.storage.iter().filter(|(_, slot)| slot.is_changed())
-        //         {
-        //             pre_state.storage.insert((*key).into(), slot.previous_or_original_value.into());
-        //             post_state.storage.insert((*key).into(), slot.present_value.into());
-        //         }
-        //
-        //         state_diff.pre.insert(addr, pre_state);
-        //         state_diff.post.insert(addr, post_state);
-        //
-        //         // determine the change type
-        //         let pre_change = if changed_acc.is_created() {
-        //             AccountChangeKind::Create
-        //         } else {
-        //             AccountChangeKind::Modify
-        //         };
-        //         let post_change = if changed_acc.is_selfdestructed() {
-        //             AccountChangeKind::SelfDestruct
-        //         } else {
-        //             AccountChangeKind::Modify
-        //         };
-        //
-        //         account_change_kinds.insert(addr, (pre_change, post_change));
-        //     }
-        //
-        //     // ensure we're only keeping changed entries
-        //     state_diff.retain_changed().remove_zero_storage_values();
-        //
-        //     self.diff_traces(&mut state_diff.pre, &mut state_diff.post, account_change_kinds);
-        //     Ok(PreStateFrame::Diff(state_diff))
-        // }
+        db: DB,
+    ) -> Result<PreStateFrame, DB::Error> {
+        let account_diffs = state.iter().map(|(addr, acc)| (*addr, acc));
+
+        if prestate_config.is_default_mode() {
+            let mut prestate = PreStateMode::default();
+            // we only want changed accounts for things like balance changes etc
+            for (addr, changed_acc) in account_diffs {
+                let db_acc = db.basic_ref(addr)?.unwrap_or_default();
+                let code = load_account_code(&db, &db_acc);
+                let mut acc_state =
+                    AccountState::from_account_info(db_acc.nonce, db_acc.balance, code);
+
+                // insert the original value of all modified storage slots
+                for (key, slot) in changed_acc.storage.iter() {
+                    acc_state.storage.insert((*key).into(), slot.previous_or_original_value.into());
+                }
+
+                prestate.0.insert(addr, acc_state);
+            }
+
+            Ok(PreStateFrame::Default(prestate))
+        } else {
+            let mut state_diff = DiffMode::default();
+            let mut account_change_kinds = HashMap::with_capacity(account_diffs.len());
+            for (addr, changed_acc) in account_diffs {
+                let db_acc = db.basic_ref(addr)?.unwrap_or_default();
+
+                let pre_code = load_account_code(&db, &db_acc);
+
+                let mut pre_state =
+                    AccountState::from_account_info(db_acc.nonce, db_acc.balance, pre_code);
+
+                let mut post_state = AccountState::from_account_info(
+                    changed_acc.info.nonce,
+                    changed_acc.info.balance,
+                    changed_acc.info.code.as_ref().map(|code| code.original_bytes()),
+                );
+
+                // handle storage changes
+                for (key, slot) in changed_acc.storage.iter().filter(|(_, slot)| slot.is_changed())
+                {
+                    pre_state.storage.insert((*key).into(), slot.previous_or_original_value.into());
+                    post_state.storage.insert((*key).into(), slot.present_value.into());
+                }
+
+                state_diff.pre.insert(addr, pre_state);
+                state_diff.post.insert(addr, post_state);
+
+                // determine the change type
+                let pre_change = if changed_acc.is_created() {
+                    AccountChangeKind::Create
+                } else {
+                    AccountChangeKind::Modify
+                };
+                let post_change = if changed_acc.is_selfdestructed() {
+                    AccountChangeKind::SelfDestruct
+                } else {
+                    AccountChangeKind::Modify
+                };
+
+                account_change_kinds.insert(addr, (pre_change, post_change));
+            }
+
+            // ensure we're only keeping changed entries
+            state_diff.retain_changed().remove_zero_storage_values();
+
+            self.diff_traces(&mut state_diff.pre, &mut state_diff.post, account_change_kinds);
+            Ok(PreStateFrame::Diff(state_diff))
+        }
     }
 
     /// Returns the difference between the pre and post state of the transaction depending on the
