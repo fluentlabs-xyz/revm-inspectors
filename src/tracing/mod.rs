@@ -12,7 +12,7 @@ use revm::{
     interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
     Interpreter, InterpreterResult},
     primitives::SpecId,
-    EvmContext, Inspector,
+    Database, EvmContext, Inspector,
 };
 
 mod arena;
