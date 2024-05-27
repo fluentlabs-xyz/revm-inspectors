@@ -7,13 +7,14 @@ use crate::tracing::{
     utils::gas_used,
 };
 use alloy_primitives::{Address, Bytes, Log, U256};
-use fluentbase_types::ExitCode;
 use revm::{
     inspectors::GasInspector,
-    interpreter::{CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
-    Interpreter, InterpreterResult, OpCode},
+    interpreter::{
+        opcode, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome,
+        InstructionResult, Interpreter, InterpreterResult, OpCode,
+    },
     primitives::SpecId,
-    Database, EvmContext, Inspector,
+    Database, EvmContext, Inspector, JournalEntry,
 };
 
 mod arena;
@@ -56,7 +57,7 @@ pub use mux::{Error as MuxError, MuxInspector};
 /// The [TracingInspector] keeps track of everything by:
 ///   1. start tracking steps/calls on [Inspector::step] and [Inspector::call]
 ///   2. complete steps/calls on [Inspector::step_end] and [Inspector::call_end]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TracingInspector {
     /// Configures what and how the inspector records traces.
     config: TracingInspectorConfig,
@@ -81,15 +82,7 @@ pub struct TracingInspector {
 impl TracingInspector {
     /// Returns a new instance for the given config
     pub fn new(config: TracingInspectorConfig) -> Self {
-        Self {
-            config,
-            traces: Default::default(),
-            trace_stack: vec![],
-            step_stack: vec![],
-            last_call_return_data: None,
-            gas_inspector: Default::default(),
-            spec_id: None,
-        }
+        Self { config, ..Default::default() }
     }
 
     /// Resets the inspector to its initial state of [Self::new].
@@ -131,6 +124,11 @@ impl TracingInspector {
     /// Gets a reference to the recorded call traces.
     pub const fn get_traces(&self) -> &CallTraceArena {
         &self.traces
+    }
+
+    /// Consumes the inspector and returns the recorded call traces.
+    pub fn into_traces(self) -> CallTraceArena {
+        self.traces
     }
 
     /// Gets a mutable reference to the recorded call traces.
@@ -185,9 +183,12 @@ impl TracingInspector {
         &self,
         _context: &EvmContext<DB>,
         _to: &Address,
-        _value: U256,
+        _value: &U256,
     ) -> bool {
-        // we don't have precompiles for rWASM
+        // if context.precompiles.contains_key(to) {
+        //     // only if this is _not_ the root call
+        //     return self.is_deep() && value.is_zero();
+        // }
         false
     }
 
@@ -211,6 +212,13 @@ impl TracingInspector {
     #[inline]
     fn last_trace_idx(&self) -> usize {
         self.trace_stack.last().copied().expect("can't start step without starting a trace first")
+    }
+
+    /// Returns a mutable reference to the last trace [CallTrace] from the stack.
+    #[track_caller]
+    fn last_trace(&mut self) -> &mut CallTraceNode {
+        let idx = self.last_trace_idx();
+        &mut self.traces.arena[idx]
     }
 
     /// _Removes_ the last trace [CallTrace] index from the stack.
@@ -264,12 +272,12 @@ impl TracingInspector {
             0,
             push_kind,
             CallTrace {
-                depth: context.journaled_state.depth,
+                depth: context.journaled_state.depth() as usize,
                 address,
                 kind,
                 data: input_data,
                 value,
-                status: ExitCode::Ok,
+                status: InstructionResult::Continue,
                 caller,
                 maybe_precompile,
                 gas_limit,
@@ -299,9 +307,9 @@ impl TracingInspector {
         if trace_idx == 0 {
             // this is the root call which should get the gas used of the transaction
             // refunds are applied after execution, which is when the root call ends
-            trace.gas_used = gas_used(context.spec_id(), gas.spend(), gas.refunded() as u64);
+            trace.gas_used = gas_used(context.spec_id(), gas.spent(), gas.refunded() as u64);
         } else {
-            trace.gas_used = gas.spend();
+            trace.gas_used = gas.spent();
         }
 
         trace.status = result;
@@ -333,7 +341,7 @@ impl TracingInspector {
     //     let memory = self
     //         .config
     //         .record_memory_snapshots
-    //         .then(|| RecordedMemory::new(interp.shared_memory.context_memory().to_vec()))
+    //         .then(|| RecordedMemory::new(interp.shared_memory.context_memory()))
     //         .unwrap_or_default();
     //     let stack = if self.config.record_stack_snapshots.is_full() {
     //         Some(interp.stack.data().clone())
@@ -341,21 +349,15 @@ impl TracingInspector {
     //         None
     //     };
     //
-    //     let op = OpCode::new(interp.current_opcode())
-    //         .or_else(|| {
-    //             // if the opcode is invalid, we'll use the invalid opcode to represent it because
-    //             // this is invoked before the opcode is executed, the evm will eventually return a
-    //             // `Halt` with invalid/unknown opcode as result
-    //             let invalid_opcode = 0xfe;
-    //             OpCode::new(invalid_opcode)
-    //         })
-    //         .expect("is valid opcode;");
+    //     // we always want an OpCode, even it is unknown because it could be an additional opcode
+    //     // that not a known constant
+    //     let op = unsafe { OpCode::new_unchecked(interp.current_opcode()) };
     //
     //     trace.trace.steps.push(CallTraceStep {
     //         depth: context.journaled_state.depth(),
     //         pc: interp.program_counter(),
     //         op,
-    //         contract: interp.contract.address,
+    //         contract: interp.contract.target_address,
     //         stack,
     //         push_stack: None,
     //         memory_size: memory.len(),
@@ -366,7 +368,7 @@ impl TracingInspector {
     //         // fields will be populated end of call
     //         gas_cost: 0,
     //         storage_change: None,
-    //         status: ExitCode::Ok,
+    //         status: InstructionResult::Continue,
     //     });
     // }
     //
@@ -445,26 +447,23 @@ where
     }
 
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
-        if self.config.record_steps {
-            self.gas_inspector.step(interp, context);
-            // self.start_step(interp, context);
-        }
+        // self.gas_inspector.step(interp, context);
+        // if self.config.record_steps {
+        //     self.start_step(interp, context);
+        // }
     }
 
     fn step_end(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
-        if self.config.record_steps {
-            self.gas_inspector.step_end(interp, context);
-            // self.fill_step_on_step_end(interp, context);
-        }
+        self.gas_inspector.step_end(interp, context);
+        // if self.config.record_steps {
+        //     self.fill_step_on_step_end(interp, context);
+        // }
     }
 
     fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
         self.gas_inspector.log(context, log);
-
-        let trace_idx = self.last_trace_idx();
-        let trace = &mut self.traces.arena[trace_idx];
-
         if self.config.record_logs {
+            let trace = self.last_trace();
             trace.ordering.push(LogCallOrder::Log(trace.logs.len()));
             trace.logs.push(log.data.clone());
         }
@@ -478,36 +477,36 @@ where
         self.gas_inspector.call(context, inputs);
 
         // determine correct `from` and `to` based on the call scheme
-        let (from, to) = match inputs.context.scheme {
+        let (from, to) = match inputs.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
-                (inputs.context.address, inputs.context.code_address)
+                (inputs.target_address, inputs.bytecode_address)
             }
-            _ => (inputs.context.caller, inputs.context.address),
+            _ => (inputs.caller, inputs.target_address),
         };
 
-        let value = if matches!(inputs.context.scheme, CallScheme::DelegateCall) {
+        let value = if matches!(inputs.scheme, CallScheme::DelegateCall) {
             // for delegate calls we need to use the value of the top trace
             if let Some(parent) = self.active_trace() {
                 parent.trace.value
             } else {
-                inputs.transfer.value
+                inputs.call_value()
             }
         } else {
-            inputs.transfer.value
+            inputs.call_value()
         };
 
         // if calls to precompiles should be excluded, check whether this is a call to a precompile
         let maybe_precompile = self
             .config
             .exclude_precompile_calls
-            .then(|| self.is_precompile_call(context, &to, value));
+            .then(|| self.is_precompile_call(context, &to, &value));
 
         self.start_trace_on_call(
             context,
             to,
             inputs.input.clone(),
             value,
-            inputs.context.scheme.into(),
+            inputs.scheme.into(),
             from,
             inputs.gas_limit,
             maybe_precompile,
@@ -537,8 +536,7 @@ where
         self.gas_inspector.create(context, inputs);
 
         // let _ = context.load_account(inputs.caller);
-        // let nonce = context.account(inputs.caller).info.nonce;
-        todo!("what to do with nonce?");
+        // let nonce = context.journaled_state.account(inputs.caller).info.nonce;
         self.start_trace_on_call(
             context,
             inputs.created_address(0),
@@ -564,16 +562,15 @@ where
         outcome: CreateOutcome,
     ) -> CreateOutcome {
         let outcome = self.gas_inspector.create_end(context, inputs, outcome);
-
         self.fill_trace_on_call_end(context, outcome.result.clone(), outcome.address);
-
         outcome
     }
 
-    fn selfdestruct(&mut self, _contract: Address, target: Address, _value: U256) {
-        let trace_idx = self.last_trace_idx();
-        let trace = &mut self.traces.arena[trace_idx].trace;
-        trace.selfdestruct_refund_target = Some(target)
+    fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
+        let node = self.last_trace();
+        node.trace.address = contract;
+        node.trace.selfdestruct_refund_target = Some(target);
+        node.trace.value = value;
     }
 }
 

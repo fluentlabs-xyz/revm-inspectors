@@ -4,13 +4,13 @@ use revm::{
     db::{CacheDB, EmptyDB},
     inspector_handle_register,
     primitives::{
-        BlockEnv, CreateScheme, EVMError, Env, EnvWithHandlerCfg, ExecutionResult, HandlerCfg,
-        Output, ResultAndState, SpecId, TransactTo, TxEnv,
+        BlockEnv, EVMError, Env, EnvWithHandlerCfg, ExecutionResult, HandlerCfg, Output,
+        ResultAndState, SpecId, TransactTo, TxEnv,
     },
     Database, DatabaseCommit, GetInspector,
 };
 use revm_inspectors::tracing::TracingInspector;
-use fluentbase_types::ExitCode;
+use std::convert::Infallible;
 
 type TestDb = CacheDB<EmptyDB>;
 
@@ -44,9 +44,9 @@ impl TestEvm {
         &mut self,
         data: Bytes,
         inspector: I,
-    ) -> Result<Address, EVMError<ExitCode>> {
+    ) -> Result<Address, EVMError<Infallible>> {
         self.env.tx.data = data;
-        self.env.tx.transact_to = TransactTo::Create(CreateScheme::Create);
+        self.env.tx.transact_to = TransactTo::Create;
 
         let (ResultAndState { result, state }, env) = self.inspect(inspector)?;
         self.db.commit(state);
@@ -66,7 +66,7 @@ impl TestEvm {
         address: Address,
         data: Bytes,
         inspector: I,
-    ) -> Result<ExecutionResult, EVMError<ExitCode>> {
+    ) -> Result<ExecutionResult, EVMError<Infallible>> {
         self.env.tx.data = data;
         self.env.tx.transact_to = TransactTo::Call(address);
         let (ResultAndState { result, state }, env) = self.inspect(inspector)?;
@@ -78,7 +78,7 @@ impl TestEvm {
     pub fn inspect<I: for<'a> GetInspector<&'a mut TestDb>>(
         &mut self,
         inspector: I,
-    ) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<ExitCode>> {
+    ) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<Infallible>> {
         inspect(&mut self.db, self.env.clone(), inspector)
     }
 }
@@ -88,7 +88,7 @@ pub fn inspect<DB, I>(
     db: DB,
     env: EnvWithHandlerCfg,
     inspector: I,
-) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<ExitCode>>
+) -> Result<(ResultAndState, EnvWithHandlerCfg), EVMError<DB::Error>>
 where
     DB: Database,
     I: GetInspector<DB>,

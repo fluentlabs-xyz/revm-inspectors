@@ -5,11 +5,11 @@ use crate::tracing::{
     TracingInspectorConfig,
 };
 use alloy_primitives::{Address, U64};
-use alloy_rpc_trace_types::parity::*;
 use alloy_rpc_types::TransactionInfo;
+use alloy_rpc_types_trace::parity::*;
 use revm::{
     db::DatabaseRef,
-    interpreter::OpCode,
+    interpreter::{opcode, OpCode},
     primitives::{Account, ExecutionResult, ResultAndState, SpecId, KECCAK_EMPTY},
 };
 use std::collections::{HashSet, VecDeque};
@@ -21,21 +21,16 @@ use std::collections::{HashSet, VecDeque};
 pub struct ParityTraceBuilder {
     /// Recorded trace nodes
     nodes: Vec<CallTraceNode>,
-    /// The spec id of the EVM.
-    spec_id: Option<SpecId>,
-
-    /// How the traces were recorded
-    _config: TracingInspectorConfig,
 }
 
 impl ParityTraceBuilder {
     /// Returns a new instance of the builder
     pub fn new(
         nodes: Vec<CallTraceNode>,
-        spec_id: Option<SpecId>,
+        _spec_id: Option<SpecId>,
         _config: TracingInspectorConfig,
     ) -> Self {
-        Self { nodes, spec_id, _config }
+        Self { nodes }
     }
 
     /// Returns a list of all addresses that appeared as callers.
@@ -380,10 +375,7 @@ impl ParityTraceBuilder {
         let maybe_memory = if step.memory.is_empty() {
             None
         } else {
-            Some(MemoryDelta {
-                off: step.memory_size,
-                data: step.memory.as_bytes().to_vec().into(),
-            })
+            Some(MemoryDelta { off: step.memory_size, data: step.memory.as_bytes().clone() })
         };
 
         let maybe_execution = Some(VmExecutedOperation {
@@ -395,16 +387,10 @@ impl ParityTraceBuilder {
 
         let cost = 0u64;
         // TODO: "add gas cost calculation?"
-        // let cost = self
-        //     .spec_id
-        //     .and_then(|spec_id| {
-        //         spec_opcode_gas(spec_id).get(step.op.get() as usize).map(|op| op.get_gas())
-        //     })
-        //     .unwrap_or_default();
 
         VmInstruction {
             pc: step.pc,
-            cost: cost as u64,
+            cost: cost as u64, // step.gas_cost,
             ex: maybe_execution,
             sub: maybe_sub_call,
             op: Some(step.op.to_string()),
@@ -566,7 +552,7 @@ where
 /// Returns the number of items pushed on the stack by a given opcode.
 /// This used to determine how many stack etries to put in the `push` element
 /// in a parity vmTrace.
-/// The value is obvious to most opcodes, but SWAP* and DUP* are a bit weird,
+/// The value is obvious for most opcodes, but SWAP* and DUP* are a bit weird,
 /// and we handle those as they are handled in parity vmtraces.
 /// For reference: <https://github.com/ledgerwatch/erigon/blob/9b74cf0384385817459f88250d1d9c459a18eab1/turbo/jsonrpc/trace_adhoc.go#L451>
 pub(crate) const fn stack_push_count(step_op: OpCode) -> usize {

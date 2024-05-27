@@ -5,7 +5,7 @@ use revm::{
     db::{CacheDB, EmptyDB},
     primitives::{
         BlockEnv, CfgEnv, CfgEnvWithHandlerCfg, EnvWithHandlerCfg, ExecutionResult, HandlerCfg,
-        Output, SpecId, TransactTo, TxEnv, CreateScheme,
+        Output, SpecId, TransactTo, TxEnv,
     },
     DatabaseCommit,
 };
@@ -40,7 +40,7 @@ fn test_internal_transfers() {
         TxEnv {
             caller: deployer,
             gas_limit: 1000000,
-            transact_to: TransactTo::Create(CreateScheme::Create),
+            transact_to: TransactTo::Create,
             data: code.into(),
             ..Default::default()
         },

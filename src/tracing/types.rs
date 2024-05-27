@@ -3,62 +3,59 @@
 use crate::tracing::{config::TraceStyle, utils, utils::convert_memory};
 pub use alloy_primitives::Log;
 use alloy_primitives::{Address, Bytes, LogData, U256, U64};
-use alloy_rpc_trace_types::{
+use alloy_rpc_types_trace::{
     geth::{CallFrame, CallLogFrame, GethDefaultTracingOptions, StructLog},
     parity::{
         Action, ActionType, CallAction, CallOutput, CallType, CreateAction, CreateOutput,
         SelfdestructAction, TraceOutput, TransactionTrace,
     },
 };
-use revm::interpreter::{CallContext, CallScheme, OpCode};
+use revm::interpreter::{opcode, CallScheme, CreateScheme, InstructionResult, OpCode};
 use std::collections::VecDeque;
-use fluentbase_types::{ExitCode};
-use revm::primitives::CreateScheme;
 
 /// A trace of a call.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CallTrace {
-    /// The depth of the call
+    /// The depth of the call.
     pub depth: usize,
-    /// Whether the call was successful
+    /// Whether the call was successful.
     pub success: bool,
-    /// caller of this call
+    /// The caller address.
     pub caller: Address,
-    /// The destination address of the call or the address from the created contract.
+    /// The target address of this call.
     ///
-    /// In other words, this is the callee if the [CallKind::Call] or the address of the created
-    /// contract if [CallKind::Create].
+    /// This is:
+    /// - [`is_selfdestruct`](Self::is_selfdestruct): the address of the selfdestructed contract
+    /// - [`CallKind::Call`] and alike: the callee, the address of the contract being called
+    /// - [`CallKind::Create`] and alike: the address of the created contract
     pub address: Address,
-    /// Whether this is a call to a precompile
+    /// Whether this is a call to a precompile.
     ///
-    /// Note: This is an Option because not all tracers make use of this
+    /// Note: This is optional because not all tracers make use of this.
     pub maybe_precompile: Option<bool>,
-    /// Holds the target for the __selfdestruct__ refund target
+    /// Holds the target for the selfdestruct refund target.
     ///
-    /// This is only set if a selfdestruct was executed.
+    /// This is only `Some` if a selfdestruct was executed and the call is executed before the
+    /// Cancun hardfork.
     ///
-    /// Note: This not necessarily guarantees that the status is [InstructionResult::SelfDestruct]
-    /// There's an edge case where a new created contract is immediately selfdestructed.
+    /// See [`is_selfdestruct`](Self::is_selfdestruct) for more information.
     pub selfdestruct_refund_target: Option<Address>,
-    /// The kind of call this is
+    /// The kind of call.
     pub kind: CallKind,
-    /// The value transferred in the call
+    /// The value transferred in the call.
     pub value: U256,
-    /// The calldata for the call, or the init code for contract creations
+    /// The calldata/input, or the init code for contract creations.
     pub data: Bytes,
-    /// The return data of the call if this was not a contract creation, otherwise it is the
-    /// runtime bytecode of the created contract
+    /// The return data, or the runtime bytecode of the created contract.
     pub output: Bytes,
-    /// The gas cost of the call
+    /// The total gas cost of the call.
     pub gas_used: u64,
-    /// The gas limit of the call
+    /// The gas limit of the call.
     pub gas_limit: u64,
-    /// The status of the trace's call
-    pub status: ExitCode,
-    /// call context of the runtime
-    pub call_context: Option<Box<CallContext>>,
-    /// Opcode-level execution steps
+    /// The final status of the call.
+    pub status: InstructionResult,
+    /// Opcode-level execution steps.
     pub steps: Vec<CallTraceStep>,
 }
 
@@ -72,21 +69,44 @@ impl CallTrace {
     /// Returns true if the status code is a revert
     #[inline]
     pub fn is_revert(&self) -> bool {
-        self.status != ExitCode::Ok
+        self.status == InstructionResult::Revert
+    }
+
+    /// Returns `true` if this trace was a selfdestruct.
+    ///
+    /// See also `TracingInspector::selfdestruct`.
+    ///
+    /// We can't rely entirely on [`Self::status`] being [`InstructionResult::SelfDestruct`]
+    /// because there's an edge case where a new created contract (CREATE) is immediately
+    /// selfdestructed.
+    ///
+    /// We also can't rely entirely on `selfdestruct_refund_target` being `Some` as the
+    /// `selfdestruct` inspector function will not be called after the Cancun hardfork.
+    #[inline]
+    pub const fn is_selfdestruct(&self) -> bool {
+        matches!(self.status, InstructionResult::SelfDestruct)
+            || self.selfdestruct_refund_target.is_some()
     }
 
     /// Returns the error message if it is an erroneous result.
     pub(crate) fn as_error_msg(&self, kind: TraceStyle) -> Option<String> {
         // See also <https://github.com/ethereum/go-ethereum/blob/34d507215951fb3f4a5983b65e127577989a6db8/eth/tracers/native/call_flat.go#L39-L55>
         self.is_error().then(|| match self.status {
-            ExitCode::Panic => {
+            InstructionResult::Revert => {
                 if kind.is_parity() { "Reverted" } else { "execution reverted" }.to_string()
             }
-            ExitCode::OutOfFuel => {
+            InstructionResult::OutOfGas | InstructionResult::MemoryOOG => {
                 if kind.is_parity() { "Out of gas" } else { "out of gas" }.to_string()
             }
-            ExitCode::StackOverflow => "Out of stack".to_string(),
-            ExitCode::PrecompileError => {
+            InstructionResult::OpcodeNotFound => {
+                if kind.is_parity() { "Bad instruction" } else { "invalid opcode" }.to_string()
+            }
+            InstructionResult::StackOverflow => "Out of stack".to_string(),
+            InstructionResult::InvalidJump => {
+                if kind.is_parity() { "Bad jump destination" } else { "invalid jump destination" }
+                    .to_string()
+            }
+            InstructionResult::PrecompileError => {
                 if kind.is_parity() { "Built-in failed" } else { "precompiled failed" }.to_string()
             }
             status => format!("{:?}", status),
@@ -170,21 +190,16 @@ impl CallTraceNode {
 
     /// Returns the status of the call
     #[inline]
-    pub const fn status(&self) -> ExitCode {
+    pub const fn status(&self) -> InstructionResult {
         self.trace.status
     }
 
-    /// Returns true if the call was a selfdestruct
+    /// Returns `true` if this trace was a selfdestruct.
     ///
-    /// A selfdestruct is marked by the refund target being set.
-    ///
-    /// See also `TracingInspector::selfdestruct`
-    ///
-    /// Note: We can't rely in the [Self::status] being [InstructionResult::SelfDestruct] because
-    /// there's an edge case where a new created contract (CREATE) is immediately selfdestructed.
+    /// See [`CallTrace::is_selfdestruct`] for more details.
     #[inline]
     pub const fn is_selfdestruct(&self) -> bool {
-        self.trace.selfdestruct_refund_target.is_some()
+        self.trace.is_selfdestruct()
     }
 
     /// Converts this node into a parity `TransactionTrace`
@@ -203,12 +218,14 @@ impl CallTraceNode {
     /// Returns the `Output` for a parity trace
     pub fn parity_trace_output(&self) -> TraceOutput {
         match self.kind() {
-            CallKind::Call | CallKind::StaticCall | CallKind::CallCode | CallKind::DelegateCall => {
-                TraceOutput::Call(CallOutput {
-                    gas_used: U64::from(self.trace.gas_used),
-                    output: self.trace.output.clone(),
-                })
-            }
+            CallKind::Call
+            | CallKind::StaticCall
+            | CallKind::CallCode
+            | CallKind::DelegateCall
+            | CallKind::AuthCall => TraceOutput::Call(CallOutput {
+                gas_used: U64::from(self.trace.gas_used),
+                output: self.trace.output.clone(),
+            }),
             CallKind::Create | CallKind::Create2 => TraceOutput::Create(CreateOutput {
                 gas_used: U64::from(self.trace.gas_used),
                 code: self.trace.output.clone(),
@@ -263,16 +280,18 @@ impl CallTraceNode {
     /// since those are handled in addition to the call action.
     pub fn parity_action(&self) -> Action {
         match self.kind() {
-            CallKind::Call | CallKind::StaticCall | CallKind::CallCode | CallKind::DelegateCall => {
-                Action::Call(CallAction {
-                    from: self.trace.caller,
-                    to: self.trace.address,
-                    value: self.trace.value,
-                    gas: U64::from(self.trace.gas_limit),
-                    input: self.trace.data.clone(),
-                    call_type: self.kind().into(),
-                })
-            }
+            CallKind::Call
+            | CallKind::StaticCall
+            | CallKind::CallCode
+            | CallKind::DelegateCall
+            | CallKind::AuthCall => Action::Call(CallAction {
+                from: self.trace.caller,
+                to: self.trace.address,
+                value: self.trace.value,
+                gas: U64::from(self.trace.gas_limit),
+                input: self.trace.data.clone(),
+                call_type: self.kind().into(),
+            }),
             CallKind::Create | CallKind::Create2 => Action::Create(CreateAction {
                 from: self.trace.caller,
                 value: self.trace.value,
@@ -342,6 +361,8 @@ pub enum CallKind {
     CallCode,
     /// Represents a delegate call.
     DelegateCall,
+    /// Represents an authorized call.
+    AuthCall,
     /// Represents a contract creation operation.
     Create,
     /// Represents a contract creation operation using the CREATE2 opcode.
@@ -349,6 +370,19 @@ pub enum CallKind {
 }
 
 impl CallKind {
+    /// Returns the string representation of the call kind.
+    pub const fn to_str(self) -> &'static str {
+        match self {
+            Self::Call => "CALL",
+            Self::StaticCall => "STATICCALL",
+            Self::CallCode => "CALLCODE",
+            Self::DelegateCall => "DELEGATECALL",
+            Self::AuthCall => "AUTHCALL",
+            Self::Create => "CREATE",
+            Self::Create2 => "CREATE2",
+        }
+    }
+
     /// Returns true if the call is a create
     #[inline]
     pub const fn is_any_create(&self) -> bool {
@@ -366,30 +400,17 @@ impl CallKind {
     pub const fn is_static_call(&self) -> bool {
         matches!(self, Self::StaticCall)
     }
+
+    /// Returns true if the call is [CallKind::AuthCall].
+    #[inline]
+    pub const fn is_auth_call(&self) -> bool {
+        matches!(self, Self::AuthCall)
+    }
 }
 
 impl std::fmt::Display for CallKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Call => {
-                write!(f, "CALL")
-            }
-            Self::StaticCall => {
-                write!(f, "STATICCALL")
-            }
-            Self::CallCode => {
-                write!(f, "CALLCODE")
-            }
-            Self::DelegateCall => {
-                write!(f, "DELEGATECALL")
-            }
-            Self::Create => {
-                write!(f, "CREATE")
-            }
-            Self::Create2 => {
-                write!(f, "CREATE2")
-            }
-        }
+        f.write_str(self.to_str())
     }
 }
 
@@ -416,9 +437,11 @@ impl From<CreateScheme> for CallKind {
 impl From<CallKind> for ActionType {
     fn from(kind: CallKind) -> Self {
         match kind {
-            CallKind::Call | CallKind::StaticCall | CallKind::DelegateCall | CallKind::CallCode => {
-                Self::Call
-            }
+            CallKind::Call
+            | CallKind::StaticCall
+            | CallKind::DelegateCall
+            | CallKind::CallCode
+            | CallKind::AuthCall => Self::Call,
             CallKind::Create => Self::Create,
             CallKind::Create2 => Self::Create,
         }
@@ -432,8 +455,8 @@ impl From<CallKind> for CallType {
             CallKind::StaticCall => Self::StaticCall,
             CallKind::CallCode => Self::CallCode,
             CallKind::DelegateCall => Self::DelegateCall,
-            CallKind::Create => Self::None,
-            CallKind::Create2 => Self::None,
+            CallKind::Create | CallKind::Create2 => Self::None,
+            CallKind::AuthCall => Self::AuthCall,
         }
     }
 }
@@ -493,7 +516,7 @@ pub struct CallTraceStep {
     /// Final status of the step
     ///
     /// This is set after the step was executed.
-    pub status: ExitCode,
+    pub status: InstructionResult,
 }
 
 // === impl CallTraceStep ===
@@ -562,7 +585,7 @@ impl CallTraceStep {
     // Returns true if the status code is an error or revert, See [InstructionResult::Revert]
     #[inline]
     pub(crate) const fn is_error(&self) -> bool {
-        self.status.into_i32() != ExitCode::Ok.into_i32()
+        self.status as u8 >= InstructionResult::Revert as u8
     }
 
     /// Returns the error message if it is an erroneous result.
@@ -609,23 +632,34 @@ pub struct StorageChange {
 /// This is a wrapper around the [SharedMemory](revm::interpreter::SharedMemory) context memory.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct RecordedMemory(pub(crate) Vec<u8>);
+pub struct RecordedMemory(pub(crate) Bytes);
 
 impl RecordedMemory {
     #[inline]
-    pub(crate) fn new(mem: Vec<u8>) -> Self {
-        Self(mem)
+    pub(crate) fn new(mem: &[u8]) -> Self {
+        Self(Bytes::copy_from_slice(mem))
     }
 
     /// Returns the memory as a byte slice
     #[inline]
-    pub fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &Bytes {
         &self.0
     }
 
+    /// Returns the memory as a byte vector
     #[inline]
-    pub(crate) fn resize(&mut self, size: usize) {
-        self.0.resize(size, 0);
+    pub fn into_bytes(self) -> Bytes {
+        self.0
+    }
+
+    #[inline]
+    pub(crate) fn resize(&mut self, len: usize) {
+        if len <= self.len() {
+            return self.0.truncate(len);
+        }
+        let mut data = self.0.to_vec();
+        data.resize(len, 0);
+        self.0 = Bytes::from(data);
     }
 
     /// Returns the size of the memory
@@ -671,6 +705,6 @@ mod opcode_serde {
     {
         let op = u8::deserialize(deserializer)?;
         Ok(OpCode::new(op)
-            .expect("unknown opcode value"))
+            .unwrap_or_else(|| OpCode::new(revm::interpreter::opcode::INVALID).unwrap()))
     }
 }

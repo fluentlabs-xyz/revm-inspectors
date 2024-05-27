@@ -14,11 +14,11 @@ pub use boa_engine::vm::RuntimeLimits;
 use boa_engine::{js_string, Context, JsError, JsObject, JsResult, JsValue, Source};
 use revm::{
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
+        return_revert, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
         InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{Env, ExecutionResult, Output, ResultAndState, TransactTo},
-    Database, DatabaseRef, EvmContext, Inspector,
+    ContextPrecompiles, Database, DatabaseRef, EvmContext, Inspector,
 };
 
 pub(crate) mod bindings;
@@ -257,7 +257,7 @@ impl JsInspector {
                     to = Some(target);
                     "CALL"
                 }
-                TransactTo::Create(_) => "CREATE",
+                TransactTo::Create => "CREATE",
             }
             .to_string(),
             from: env.tx.caller,
@@ -363,6 +363,18 @@ impl JsInspector {
         self.call_stack.push(call);
         self.active_call()
     }
+
+    /// Registers the precompiles in the JS context
+    fn register_precompiles<DB: Database>(&mut self, precompiles: &ContextPrecompiles<DB>) {
+        if !self.precompiles_registered {
+            return;
+        }
+        let precompiles = PrecompileList(precompiles.addresses().copied().collect());
+
+        let _ = precompiles.register_callable(&mut self.ctx);
+
+        self.precompiles_registered = true
+    }
 }
 
 impl<DB> Inspector<DB> for JsInspector
@@ -375,7 +387,7 @@ where
         //     return;
         // }
         //
-        // let (db, _db_guard) = EvmDbRef::new(&context.state, &context.db);
+        // let (db, _db_guard) = EvmDbRef::new(&context.journaled_state.state, &context.db);
         //
         // let (stack, _stack_guard) = StackRef::new(&interp.stack);
         // let (memory, _memory_guard) = MemoryRef::new(&interp.shared_memory);
@@ -385,7 +397,7 @@ where
         //     memory,
         //     pc: interp.program_counter() as u64,
         //     gas_remaining: interp.gas.remaining(),
-        //     cost: interp.gas.spend(),
+        //     cost: interp.gas.spent(),
         //     depth: context.journaled_state.depth(),
         //     refund: interp.gas.refunded() as u64,
         //     error: None,
@@ -413,7 +425,7 @@ where
         //         memory,
         //         pc: interp.program_counter() as u64,
         //         gas_remaining: interp.gas.remaining(),
-        //         cost: interp.gas.spend(),
+        //         cost: interp.gas.spent(),
         //         depth: context.journaled_state.depth(),
         //         refund: interp.gas.refunded() as u64,
         //         error: Some(format!("{:?}", interp.instruction_result)),
@@ -431,20 +443,22 @@ where
         context: &mut EvmContext<DB>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
+        // self.register_precompiles(&context.precompiles);
+
         // determine correct `from` and `to` based on the call scheme
-        let (from, to) = match inputs.context.scheme {
+        let (from, to) = match inputs.scheme {
             CallScheme::DelegateCall | CallScheme::CallCode => {
-                (inputs.context.address, inputs.context.code_address)
+                (inputs.target_address, inputs.bytecode_address)
             }
-            _ => (inputs.context.caller, inputs.context.address),
+            _ => (inputs.caller, inputs.bytecode_address),
         };
 
-        let value = inputs.transfer.value;
+        let value = inputs.transfer_value().unwrap_or_default();
         self.push_call(
             to,
             inputs.input.clone(),
             value,
-            inputs.context.scheme.into(),
+            inputs.scheme.into(),
             from,
             inputs.gas_limit,
         );
@@ -473,7 +487,7 @@ where
     ) -> CallOutcome {
         if self.can_call_exit() {
             let frame_result = FrameResult {
-                gas_used: outcome.result.gas.spend(),
+                gas_used: outcome.result.gas.spent(),
                 output: outcome.result.output.clone(),
                 error: None,
             };
@@ -492,6 +506,8 @@ where
         context: &mut EvmContext<DB>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
+        // self.register_precompiles(&context.precompiles);
+        //
         // let _ = context.load_account(inputs.caller);
         // let nonce = context.journaled_state.account(inputs.caller).info.nonce;
         // let address = inputs.created_address(nonce);
@@ -524,7 +540,7 @@ where
     ) -> CreateOutcome {
         if self.can_call_exit() {
             let frame_result = FrameResult {
-                gas_used: outcome.result.gas.spend(),
+                gas_used: outcome.result.gas.spent(),
                 output: outcome.result.output.clone(),
                 error: None,
             };
@@ -642,7 +658,7 @@ pub enum JsInspectorError {
 #[inline]
 fn js_error_to_revert(err: JsError) -> InterpreterResult {
     InterpreterResult {
-        result: InstructionResult::Panic,
+        result: InstructionResult::Revert,
         output: err.to_string().into(),
         gas: Gas::new(0),
     }
