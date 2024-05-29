@@ -23,8 +23,8 @@ clippy.lint_groups_priority = "allow"
 # eth
 alloy-sol-types = "0.7.2"
 alloy-primitives = "0.7.2"
-alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "ed5450e" }
-alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", rev = "ed5450e" }
+alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }
+alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", rev = "64feb9b" }
 #revm = { package = "fluentbase-revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "feat/upgrade-revm", features = ["std", "secp256k1", "fluent_revm"], default-features = false }
 revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", features = ["std", "secp256k1", "fluent_revm"], default-features = false }
 fluentbase-types = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
