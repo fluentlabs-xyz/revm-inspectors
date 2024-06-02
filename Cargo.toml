@@ -24,8 +24,9 @@ clippy.lint_groups_priority = "allow"
 alloy-sol-types = "0.7.2"
 alloy-primitives = "0.7.2"
 #revm = { package = "fluentbase-revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "feat/upgrade-revm", features = ["std", "secp256k1", "fluent_revm"], default-features = false }
-revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", features = ["std", "secp256k1", "fluent_revm"], default-features = false }
-fluentbase-types = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
+revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", features = ["std", "secp256k1"], default-features = false }
+#fluentbase-types = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
+fluentbase-types = { path = "../fluentbase/crates/types" }
 alloy-rpc-types = { git = "https://github.com/alloy-rs/alloy", rev = "bd39117" }
 alloy-rpc-types-trace = { git = "https://github.com/alloy-rs/alloy", rev = "bd39117" }
 
@@ -45,5 +46,11 @@ boa_gc = { version = "0.18", optional = true }
 expect-test = "1.4"
 
 [features]
+default = ["fluent_revm"]
 serde = ["dep:serde", "revm/serde"]
 js-tracer = ["dep:boa_engine", "dep:boa_gc"]
+
+fluent_revm = [
+    "fluentbase-types/rwasm",
+    "revm/fluent_revm",
+]
