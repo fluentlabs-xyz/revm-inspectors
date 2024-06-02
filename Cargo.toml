@@ -46,7 +46,7 @@ boa_gc = { version = "0.18", optional = true }
 expect-test = "1.4"
 
 [features]
-default = ["fluent_revm"]
+default = []
 serde = ["dep:serde", "revm/serde"]
 js-tracer = ["dep:boa_engine", "dep:boa_gc"]
 
