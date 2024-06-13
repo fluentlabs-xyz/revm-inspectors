@@ -1028,7 +1028,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-codec"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "alloy-primitives",
  "byteorder",
@@ -1042,7 +1042,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-codec-derive"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1054,7 +1054,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-core"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "alloy-rlp",
  "byteorder",
@@ -1072,7 +1072,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-poseidon"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "bitvec",
  "halo2curves 0.6.1 (git+https://github.com/privacy-scaling-explorations/halo2curves?tag=v0.6.1)",
@@ -1084,7 +1084,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-revm"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "auto_impl",
  "cfg-if",
@@ -1103,7 +1103,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-runtime"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "byteorder",
  "eth_trie",
@@ -1122,7 +1122,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "alloy-rlp",
  "byteorder",
@@ -1139,7 +1139,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-sdk-derive"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "convert_case 0.6.0",
  "crypto-hashes",
@@ -1152,7 +1152,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-types"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "alloy-primitives",
  "rwasm",
@@ -1162,7 +1162,7 @@ dependencies = [
 [[package]]
 name = "fluentbase-zktrie"
 version = "0.1.0"
-source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#34644a18f1359a05b4ef86eed29885c64816bb95"
+source = "git+https://github.com/fluentlabs-xyz/fluentbase?branch=dev2#43b50b1a3b4e888a24673c2307dba0f58d78f089"
 dependencies = [
  "byteorder",
  "fluentbase-poseidon",
@@ -1682,9 +1682,9 @@ dependencies = [
 
 [[package]]
 name = "memchr"
-version = "2.7.2"
+version = "2.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c8640c5d730cb13ebd907d8d04b52f55ac9a2eec55b440c8892f40d56c76c1d"
+checksum = "6d0d8b92cd8358e8d229c11df9358decae64d137c5be540952c5ca7b25aea768"
 
 [[package]]
 name = "memoffset"
