@@ -5,8 +5,7 @@ use crate::tracing::{
     TracingInspectorConfig,
 };
 use alloy_primitives::{Address, U64};
-use alloy_rpc_types::TransactionInfo;
-use alloy_rpc_types_trace::parity::*;
+use alloy_rpc_types::{trace::parity::*, TransactionInfo};
 use revm::{
     db::DatabaseRef,
     interpreter::{opcode, OpCode},
@@ -490,7 +489,9 @@ where
         let entry = state_diff.entry(addr).or_default();
 
         // we check if this account was created during the transaction
-        if changed_acc.is_created() || changed_acc.is_loaded_as_not_existing() {
+        if changed_acc.is_created() {
+            // This only applies to newly created accounts
+            // A non existing touched account (e.g. `to` that does not exist) is excluded here
             entry.balance = Delta::Added(changed_acc.info.balance);
             entry.nonce = Delta::Added(U64::from(changed_acc.info.nonce));
 
@@ -504,7 +505,7 @@ where
                 entry.storage.insert((*key).into(), Delta::Added(slot.present_value.into()));
             }
         } else {
-            // account already exists, we need to fetch the account from the db
+            // account may exist or not, we need to fetch the account from the db
             let db_acc = db.basic_ref(addr)?.unwrap_or_default();
 
             // update _changed_ storage values
@@ -554,64 +555,63 @@ where
 /// For reference: <https://github.com/ledgerwatch/erigon/blob/9b74cf0384385817459f88250d1d9c459a18eab1/turbo/jsonrpc/trace_adhoc.go#L451>
 pub(crate) const fn stack_push_count(step_op: OpCode) -> usize {
     // TODO: "add stack push counts?"
-    0
-    // let step_op = step_op.get();
-    // match step_op {
-    //     opcode::PUSH0..=opcode::PUSH32 => 1,
-    //     opcode::SWAP1..=opcode::SWAP16 => (step_op - opcode::SWAP1) as usize + 2,
-    //     opcode::DUP1..=opcode::DUP16 => (step_op - opcode::DUP1) as usize + 2,
-    //     opcode::CALLDATALOAD
-    //     | opcode::SLOAD
-    //     | opcode::MLOAD
-    //     | opcode::CALLDATASIZE
-    //     | opcode::LT
-    //     | opcode::GT
-    //     | opcode::DIV
-    //     | opcode::SDIV
-    //     | opcode::SAR
-    //     | opcode::AND
-    //     | opcode::EQ
-    //     | opcode::CALLVALUE
-    //     | opcode::ISZERO
-    //     | opcode::ADD
-    //     | opcode::EXP
-    //     | opcode::CALLER
-    //     | opcode::KECCAK256
-    //     | opcode::SUB
-    //     | opcode::ADDRESS
-    //     | opcode::GAS
-    //     | opcode::MUL
-    //     | opcode::RETURNDATASIZE
-    //     | opcode::NOT
-    //     | opcode::SHR
-    //     | opcode::SHL
-    //     | opcode::EXTCODESIZE
-    //     | opcode::SLT
-    //     | opcode::OR
-    //     | opcode::NUMBER
-    //     | opcode::PC
-    //     | opcode::TIMESTAMP
-    //     | opcode::BALANCE
-    //     | opcode::SELFBALANCE
-    //     | opcode::MULMOD
-    //     | opcode::ADDMOD
-    //     | opcode::BASEFEE
-    //     | opcode::BLOCKHASH
-    //     | opcode::BYTE
-    //     | opcode::XOR
-    //     | opcode::ORIGIN
-    //     | opcode::CODESIZE
-    //     | opcode::MOD
-    //     | opcode::SIGNEXTEND
-    //     | opcode::GASLIMIT
-    //     | opcode::DIFFICULTY
-    //     | opcode::SGT
-    //     | opcode::GASPRICE
-    //     | opcode::MSIZE
-    //     | opcode::EXTCODEHASH
-    //     | opcode::SMOD
-    //     | opcode::CHAINID
-    //     | opcode::COINBASE => 1,
-    //     _ => 0,
-    // }
+    let step_op = step_op.get();
+    match step_op {
+        // opcode::PUSH0..=opcode::PUSH32 => 1,
+        // opcode::SWAP1..=opcode::SWAP16 => (step_op - opcode::SWAP1) as usize + 2,
+        // opcode::DUP1..=opcode::DUP16 => (step_op - opcode::DUP1) as usize + 2,
+        // opcode::CALLDATALOAD
+        // | opcode::SLOAD
+        // | opcode::MLOAD
+        // | opcode::CALLDATASIZE
+        // | opcode::LT
+        // | opcode::GT
+        // | opcode::DIV
+        // | opcode::SDIV
+        // | opcode::SAR
+        // | opcode::AND
+        // | opcode::EQ
+        // | opcode::CALLVALUE
+        // | opcode::ISZERO
+        // | opcode::ADD
+        // | opcode::EXP
+        // | opcode::CALLER
+        // | opcode::KECCAK256
+        // | opcode::SUB
+        // | opcode::ADDRESS
+        // | opcode::GAS
+        // | opcode::MUL
+        // | opcode::RETURNDATASIZE
+        // | opcode::NOT
+        // | opcode::SHR
+        // | opcode::SHL
+        // | opcode::EXTCODESIZE
+        // | opcode::SLT
+        // | opcode::OR
+        // | opcode::NUMBER
+        // | opcode::PC
+        // | opcode::TIMESTAMP
+        // | opcode::BALANCE
+        // | opcode::SELFBALANCE
+        // | opcode::MULMOD
+        // | opcode::ADDMOD
+        // | opcode::BASEFEE
+        // | opcode::BLOCKHASH
+        // | opcode::BYTE
+        // | opcode::XOR
+        // | opcode::ORIGIN
+        // | opcode::CODESIZE
+        // | opcode::MOD
+        // | opcode::SIGNEXTEND
+        // | opcode::GASLIMIT
+        // | opcode::DIFFICULTY
+        // | opcode::SGT
+        // | opcode::GASPRICE
+        // | opcode::MSIZE
+        // | opcode::EXTCODEHASH
+        // | opcode::SMOD
+        // | opcode::CHAINID
+        // | opcode::COINBASE => 1,
+        _ => 0,
+    }
 }

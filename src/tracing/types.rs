@@ -3,7 +3,7 @@
 use crate::tracing::{config::TraceStyle, utils, utils::convert_memory};
 pub use alloy_primitives::Log;
 use alloy_primitives::{Address, Bytes, LogData, U256, U64};
-use alloy_rpc_types_trace::{
+use alloy_rpc_types::trace::{
     geth::{CallFrame, CallLogFrame, GethDefaultTracingOptions, StructLog},
     parity::{
         Action, ActionType, CallAction, CallOutput, CallType, CreateAction, CreateOutput,
@@ -610,7 +610,7 @@ pub enum StorageChangeReason {
 /// Represents a storage change during execution.
 ///
 /// This maps to evm internals:
-/// [JournalEntry::StorageChange](revm::JournalEntry::StorageChange)
+/// [JournalEntry::StorageChanged](revm::JournalEntry::StorageChanged)
 ///
 /// It is used to track both storage change and warm load of a storage slot. For warm load in regard
 /// to EIP-2929 AccessList had_value will be None.
