@@ -23,8 +23,8 @@ clippy.lint_groups_priority = "allow"
 # eth
 alloy-sol-types = "0.7"
 alloy-primitives = "0.7"
-#revm = { package = "fluentbase-revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "feat/upgrade-revm", features = ["std", "secp256k1", "revm-rwasm"], default-features = false }
-revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", default-features = false, features = ["std"] }
+revm = { package = "revm-fluent", git = "https://github.com/fluentlabs-xyz/revm-rwasm.git", branch = "devel", features = ["std", "secp256k1"], default-features = false }
+#revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", default-features = false, features = ["std"] }
 #fluentbase-types = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
 alloy-rpc-types = { version = "0.1", features = ["eth", "trace"] }
 #revm = { version = "9.0", git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f", default-features = false, features = [
