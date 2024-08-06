@@ -654,7 +654,7 @@ impl CallFrame {
 
 /// The `ctx` object that represents the context in which the transaction is executed.
 pub(crate) struct JsEvmContext {
-    /// String, one of the two values CALL and CREATE
+    /// String, one of the 3 values CALL, CREATE and BLENDED
     pub(crate) r#type: String,
     /// Sender of the transaction
     pub(crate) from: Address,
