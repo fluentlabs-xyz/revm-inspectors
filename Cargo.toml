@@ -23,20 +23,18 @@ clippy.lint_groups_priority = "allow"
 # eth
 alloy-sol-types = "0.7"
 alloy-primitives = "0.7"
-revm = { package = "revm-fluent", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", features = [
-    "std",
-    "secp256k1",
-    "rwasm"
-], default-features = false }
-#revm = { package = "revm-fluent", path = "../fluentbase/revm/crates/revm_fluent", features = [
+#revm = { package = "revm-fluent", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", features = [
 #    "std",
 #    "secp256k1",
-#    "blst",
-#    "rwasm",
-#    #    "debug_print",
+#    "rwasm"
 #], default-features = false }
-#revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", default-features = false, features = ["std"] }
-#fluentbase-types = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
+revm = { package = "revm-fluent", path = "../fluentbase/revm/crates/revm_fluent", features = [
+    "std",
+    "secp256k1",
+    "blst",
+    "rwasm",
+    #    "debug_print",
+], default-features = false }
 alloy-rpc-types = { version = "0.1", features = ["eth", "trace"] }
 #revm = { version = "9.0", git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f", default-features = false, features = [
 #    "std",
@@ -51,8 +49,8 @@ serde = { version = "1", optional = true, features = ["derive"] }
 serde_json = "1.0"
 
 # js-tracer
-boa_engine = { version = "0.18", optional = true }
-boa_gc = { version = "0.18", optional = true }
+boa_engine = { version = "0.19", optional = true }
+boa_gc = { version = "0.19", optional = true }
 
 [dev-dependencies]
 expect-test = "1.4"
