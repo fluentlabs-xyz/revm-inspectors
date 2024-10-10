@@ -258,7 +258,6 @@ impl JsInspector {
                     "CALL"
                 }
                 TransactTo::Create => "CREATE",
-                TransactTo::Blended(_, _) => "BLENDED",
             }
             .to_string(),
             from: env.tx.caller,
