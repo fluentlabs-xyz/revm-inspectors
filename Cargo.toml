@@ -23,7 +23,7 @@ clippy.lint_groups_priority = "allow"
 # eth
 alloy-sol-types = "0.7"
 alloy-primitives = "0.7"
-revm = { package = "revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", features = [
+revm = { package = "revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "feat/fuel-vm", features = [
     "std",
     "hashbrown",
     "blst"
