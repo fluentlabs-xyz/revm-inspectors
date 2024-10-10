@@ -23,18 +23,16 @@ clippy.lint_groups_priority = "allow"
 # eth
 alloy-sol-types = "0.7"
 alloy-primitives = "0.7"
-#revm = { package = "revm-fluent", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", features = [
-#    "std",
-#    "secp256k1",
-#    "rwasm"
-#], default-features = false }
-revm = { package = "revm-fluent", path = "../fluentbase/revm/crates/revm_fluent", features = [
+revm = { package = "revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", features = [
     "std",
-    "secp256k1",
-    "blst",
-    "rwasm",
-    #    "debug_print",
+    "hashbrown",
+    "blst"
 ], default-features = false }
+#revm = { package = "revm", path = "../fluentbase/revm/crates/revm", features = [
+#    "std",
+#    "hashbrown",
+#    "blst",
+#], default-features = false }
 alloy-rpc-types = { version = "0.1", features = ["eth", "trace"] }
 #revm = { version = "9.0", git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f", default-features = false, features = [
 #    "std",
@@ -61,5 +59,5 @@ serde = ["dep:serde", "revm/serde"]
 js-tracer = ["dep:boa_engine", "dep:boa_gc"]
 
 rwasm = [
-    "revm/rwasm",
+#    "revm/rwasm",
 ]
