@@ -3,7 +3,7 @@
 use crate::tracing::{
     js::{
         bindings::{
-            CallFrame, Contract, EvmDbRef, FrameResult, JsEvmContext, MemoryRef, StackRef, StepLog,
+            CallFrame, Contract, EvmDbRef, FrameResult, JsEvmContext, StepLog,
         },
         builtins::{register_builtins, to_serde_value, PrecompileList},
     },
@@ -14,7 +14,7 @@ pub use boa_engine::vm::RuntimeLimits;
 use boa_engine::{js_string, Context, JsError, JsObject, JsResult, JsValue, Source};
 use revm::{
     interpreter::{
-        return_revert, CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
         InstructionResult, Interpreter, InterpreterResult,
     },
     primitives::{Env, ExecutionResult, Output, ResultAndState, TransactTo},
