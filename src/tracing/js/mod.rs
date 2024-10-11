@@ -258,6 +258,7 @@ impl JsInspector {
                     "CALL"
                 }
                 TransactTo::Create => "CREATE",
+                TransactTo::Blended(_, _) => "BLENDED",
             }
             .to_string(),
             from: env.tx.caller,
@@ -523,8 +524,8 @@ where
         // if self.can_call_enter() {
         //     let call = self.active_call();
         //     let frame =
-        //         CallFrame { contract: call.contract.clone(), kind: call.kind, gas: call.gas_limit };
-        //     if let Err(err) = self.try_enter(frame) {
+        //         CallFrame { contract: call.contract.clone(), kind: call.kind, gas: call.gas_limit
+        // };     if let Err(err) = self.try_enter(frame) {
         //         return Some(CreateOutcome::new(js_error_to_revert(err), None));
         //     }
         // }
