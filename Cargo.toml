@@ -1,35 +1,41 @@
 [package]
 name = "revm-inspectors"
 description = "Revm inspector implementations"
-version = "0.1.0"
+version = "0.8.1"
 edition = "2021"
-rust-version = "1.76.0"
+rust-version = "1.79.0"
 license = "MIT OR Apache-2.0"
-homepage = "https://github.com/paradigmxyz/evm-inspectors"
-repository = "https://github.com/paradigmxyz/evm-inspectors"
+homepage = "https://github.com/paradigmxyz/revm-inspectors"
+repository = "https://github.com/paradigmxyz/revm-inspectors"
 categories = ["cryptography"]
 keywords = ["ethereum", "evm", "inspectors", "tracing", "debugging"]
+exclude = [
+    ".github",
+    "scripts",
+    "testdata",
+    "tests",
+    "cliff.toml",
+    "deny.toml",
+    "release.toml",
+]
 
 [lints]
 rust.missing_debug_implementations = "warn"
 rust.missing_docs = "warn"
 rust.unreachable_pub = "warn"
-rustdoc.all = "warn"
 rust.unused_must_use = "deny"
 rust.rust_2018_idioms = "deny"
+rustdoc.all = "warn"
 clippy.lint_groups_priority = "allow"
 
 [dependencies]
 # eth
-alloy-sol-types = "0.7"
-alloy-primitives = "0.7"
+alloy-rpc-types-eth = "0.4"
+alloy-rpc-types-trace = "0.4"
+alloy-sol-types = "0.8"
+alloy-primitives = { version = "0.8", features = ["map"] }
+#revm = { version = "14.0.3", default-features = false, features = ["std"] }
 revm = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", features = ["std", "secp256k1"], default-features = false }
-#revm = { package = "revm-fluent", path = "../revm-rwasm/crates/revm_fluent", default-features = false, features = ["std"] }
-#fluentbase-types = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel" }
-alloy-rpc-types = { version = "0.1", features = ["eth", "trace"] }
-#revm = { version = "9.0", git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f", default-features = false, features = [
-#    "std",
-#] }
 
 anstyle = "1.0"
 colorchoice = "1.0"
@@ -40,13 +46,12 @@ serde = { version = "1", optional = true, features = ["derive"] }
 serde_json = "1.0"
 
 # js-tracer
-boa_engine = { version = "=0.18", optional = true }
-boa_gc = { version = "=0.18", optional = true }
+boa_engine = { version = "0.19", optional = true }
+boa_gc = { version = "0.19", optional = true }
 
 [dev-dependencies]
-expect-test = "1.4"
+snapbox = "0.6"
 
 [features]
-default = []
 serde = ["dep:serde", "revm/serde"]
 js-tracer = ["dep:boa_engine", "dep:boa_gc"]

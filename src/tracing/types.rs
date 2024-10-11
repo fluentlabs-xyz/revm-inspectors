@@ -2,8 +2,8 @@
 
 use crate::tracing::{config::TraceStyle, utils, utils::convert_memory};
 pub use alloy_primitives::Log;
-use alloy_primitives::{Address, Bytes, LogData, U256, U64};
-use alloy_rpc_types::trace::{
+use alloy_primitives::{Address, Bytes, FixedBytes, LogData, U256};
+use alloy_rpc_types_trace::{
     geth::{CallFrame, CallLogFrame, GethDefaultTracingOptions, StructLog},
     parity::{
         Action, ActionType, CallAction, CallOutput, CallType, CreateAction, CreateOutput,
@@ -13,7 +13,29 @@ use alloy_rpc_types::trace::{
 use revm::interpreter::{opcode, CallScheme, CreateScheme, InstructionResult, OpCode};
 use std::collections::VecDeque;
 
-/// A trace of a call.
+/// Decoded call data.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DecodedCallData {
+    /// The function signature.
+    pub signature: String,
+    /// The function arguments.
+    pub args: Vec<String>,
+}
+
+/// Additional decoded data enhancing the [CallTrace].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DecodedCallTrace {
+    /// Optional decoded label for the call.
+    pub label: Option<String>,
+    /// Optional decoded return data.
+    pub return_data: Option<String>,
+    /// Optional decoded call data.
+    pub call_data: Option<DecodedCallData>,
+}
+
+/// A trace of a call with optional decoded data.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CallTrace {
@@ -26,7 +48,6 @@ pub struct CallTrace {
     /// The target address of this call.
     ///
     /// This is:
-    /// - [`is_selfdestruct`](Self::is_selfdestruct): the address of the selfdestructed contract
     /// - [`CallKind::Call`] and alike: the callee, the address of the contract being called
     /// - [`CallKind::Create`] and alike: the address of the created contract
     pub address: Address,
@@ -34,6 +55,8 @@ pub struct CallTrace {
     ///
     /// Note: This is optional because not all tracers make use of this.
     pub maybe_precompile: Option<bool>,
+    /// The address of the selfdestructed contract.
+    pub selfdestruct_address: Option<Address>,
     /// Holds the target for the selfdestruct refund target.
     ///
     /// This is only `Some` if a selfdestruct was executed and the call is executed before the
@@ -41,6 +64,13 @@ pub struct CallTrace {
     ///
     /// See [`is_selfdestruct`](Self::is_selfdestruct) for more information.
     pub selfdestruct_refund_target: Option<Address>,
+    /// The value transferred on a selfdestruct.
+    ///
+    /// This is only `Some` if a selfdestruct was executed and the call is executed before the
+    /// Cancun hardfork.
+    ///
+    /// See [`is_selfdestruct`](Self::is_selfdestruct) for more information.
+    pub selfdestruct_transferred_value: Option<U256>,
     /// The kind of call.
     pub kind: CallKind,
     /// The value transferred in the call.
@@ -57,6 +87,8 @@ pub struct CallTrace {
     pub status: InstructionResult,
     /// Opcode-level execution steps.
     pub steps: Vec<CallTraceStep>,
+    /// Optional complementary decoded call data.
+    pub decoded: DecodedCallTrace,
 }
 
 impl CallTrace {
@@ -66,7 +98,7 @@ impl CallTrace {
         !self.status.is_ok()
     }
 
-    /// Returns true if the status code is a revert
+    /// Returns true if the status code is a revert.
     #[inline]
     pub fn is_revert(&self) -> bool {
         self.status == InstructionResult::Revert
@@ -109,8 +141,55 @@ impl CallTrace {
             InstructionResult::PrecompileError => {
                 if kind.is_parity() { "Built-in failed" } else { "precompiled failed" }.to_string()
             }
+            InstructionResult::InvalidFEOpcode => {
+                if kind.is_parity() { "Bad instruction" } else { "invalid opcode: INVALID" }
+                    .to_string()
+            }
             status => format!("{:?}", status),
         })
+    }
+}
+
+/// Additional decoded data enhancing the [CallLog].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DecodedCallLog {
+    /// The decoded event name.
+    pub name: Option<String>,
+    /// The decoded log parameters, a vector of the parameter name (e.g. foo) and the parameter
+    /// value (e.g. 0x9d3...45ca).
+    pub params: Option<Vec<(String, String)>>,
+}
+
+/// A log with optional decoded data.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CallLog {
+    /// The raw log data.
+    pub raw_log: LogData,
+    /// Optional complementary decoded log data.
+    pub decoded: DecodedCallLog,
+    /// The position of the log relative to subcalls within the same trace.
+    pub position: u64,
+}
+
+impl From<Log> for CallLog {
+    /// Converts a [`Log`] into a [`CallLog`].
+    fn from(log: Log) -> Self {
+        Self {
+            position: Default::default(),
+            raw_log: log.data,
+            decoded: DecodedCallLog { name: None, params: None },
+        }
+    }
+}
+
+impl CallLog {
+    /// Sets the position of the log.
+    #[inline]
+    pub fn with_position(mut self, position: u64) -> Self {
+        self.position = position;
+        self
     }
 }
 
@@ -127,9 +206,9 @@ pub struct CallTraceNode {
     /// The call trace
     pub trace: CallTrace,
     /// Recorded logs, if enabled
-    pub logs: Vec<LogData>,
+    pub logs: Vec<CallLog>,
     /// Ordering of child calls and logs
-    pub ordering: Vec<LogCallOrder>,
+    pub ordering: Vec<TraceMemberOrder>,
 }
 
 impl CallTraceNode {
@@ -194,6 +273,11 @@ impl CallTraceNode {
         self.trace.status
     }
 
+    /// Returns the call context's 4 byte selector
+    pub fn selector(&self) -> Option<FixedBytes<4>> {
+        (self.trace.data.len() >= 4).then(|| FixedBytes::from_slice(&self.trace.data[..4]))
+    }
+
     /// Returns `true` if this trace was a selfdestruct.
     ///
     /// See [`CallTrace::is_selfdestruct`] for more details.
@@ -223,43 +307,39 @@ impl CallTraceNode {
             | CallKind::CallCode
             | CallKind::DelegateCall
             | CallKind::AuthCall => TraceOutput::Call(CallOutput {
-                gas_used: U64::from(self.trace.gas_used),
+                gas_used: self.trace.gas_used,
                 output: self.trace.output.clone(),
             }),
-            CallKind::Create | CallKind::Create2 => TraceOutput::Create(CreateOutput {
-                gas_used: U64::from(self.trace.gas_used),
-                code: self.trace.output.clone(),
-                address: self.trace.address,
-            }),
+            CallKind::Create | CallKind::Create2 | CallKind::EOFCreate => {
+                TraceOutput::Create(CreateOutput {
+                    gas_used: self.trace.gas_used,
+                    code: self.trace.output.clone(),
+                    address: self.trace.address,
+                })
+            }
         }
     }
 
     /// If the trace is a selfdestruct, returns the `Action` for a parity trace.
     pub fn parity_selfdestruct_action(&self) -> Option<Action> {
-        if self.is_selfdestruct() {
-            Some(Action::Selfdestruct(SelfdestructAction {
-                address: self.trace.address,
+        self.is_selfdestruct().then(|| {
+            Action::Selfdestruct(SelfdestructAction {
+                address: self.trace.selfdestruct_address.unwrap_or_default(),
                 refund_address: self.trace.selfdestruct_refund_target.unwrap_or_default(),
-                balance: self.trace.value,
-            }))
-        } else {
-            None
-        }
+                balance: self.trace.selfdestruct_transferred_value.unwrap_or_default(),
+            })
+        })
     }
 
     /// If the trace is a selfdestruct, returns the `CallFrame` for a geth call trace
     pub fn geth_selfdestruct_call_trace(&self) -> Option<CallFrame> {
-        if self.is_selfdestruct() {
-            Some(CallFrame {
-                typ: "SELFDESTRUCT".to_string(),
-                from: self.trace.caller,
-                to: self.trace.selfdestruct_refund_target,
-                value: Some(self.trace.value),
-                ..Default::default()
-            })
-        } else {
-            None
-        }
+        self.is_selfdestruct().then(|| CallFrame {
+            typ: "SELFDESTRUCT".to_string(),
+            from: self.trace.selfdestruct_address.unwrap_or_default(),
+            to: self.trace.selfdestruct_refund_target,
+            value: self.trace.selfdestruct_transferred_value,
+            ..Default::default()
+        })
     }
 
     /// If the trace is a selfdestruct, returns the `TransactionTrace` for a parity trace.
@@ -288,16 +368,18 @@ impl CallTraceNode {
                 from: self.trace.caller,
                 to: self.trace.address,
                 value: self.trace.value,
-                gas: U64::from(self.trace.gas_limit),
+                gas: self.trace.gas_limit,
                 input: self.trace.data.clone(),
                 call_type: self.kind().into(),
             }),
-            CallKind::Create | CallKind::Create2 => Action::Create(CreateAction {
-                from: self.trace.caller,
-                value: self.trace.value,
-                gas: U64::from(self.trace.gas_limit),
-                init: self.trace.data.clone(),
-            }),
+            CallKind::Create | CallKind::Create2 | CallKind::EOFCreate => {
+                Action::Create(CreateAction {
+                    from: self.trace.caller,
+                    value: self.trace.value,
+                    gas: self.trace.gas_limit,
+                    init: self.trace.data.clone(),
+                })
+            }
         }
     }
 
@@ -325,10 +407,19 @@ impl CallTraceNode {
 
         // we need to populate error and revert reason
         if !self.trace.success {
+            if self.kind().is_any_create() {
+                call_frame.to = None;
+            }
+
+            if !self.status().is_revert() {
+                call_frame.gas_used = U256::from(self.trace.gas_limit);
+                call_frame.output = None;
+            }
+
             call_frame.revert_reason = utils::maybe_revert_reason(self.trace.output.as_ref());
 
-            // Note: the call tracer mimics parity's trace transaction and geth maps errors to parity style error messages, <https://github.com/ethereum/go-ethereum/blob/34d507215951fb3f4a5983b65e127577989a6db8/eth/tracers/native/call_flat.go#L39-L55>
-            call_frame.error = self.trace.as_error_msg(TraceStyle::Parity);
+            // Note: regular calltracer uses geth errors, only flatCallTracer uses parity errors: <https://github.com/ethereum/go-ethereum/blob/a9523b6428238a762e1a1e55e46ead47630c3a23/eth/tracers/native/call_flat.go#L226>
+            call_frame.error = self.trace.as_error_msg(TraceStyle::Geth);
         }
 
         if include_logs && !self.logs.is_empty() {
@@ -337,8 +428,9 @@ impl CallTraceNode {
                 .iter()
                 .map(|log| CallLogFrame {
                     address: Some(self.execution_address()),
-                    topics: Some(log.topics().to_vec()),
-                    data: Some(log.data.clone()),
+                    topics: Some(log.raw_log.topics().to_vec()),
+                    data: Some(log.raw_log.data.clone()),
+                    position: Some(log.position),
                 })
                 .collect();
         }
@@ -367,6 +459,8 @@ pub enum CallKind {
     Create,
     /// Represents a contract creation operation using the CREATE2 opcode.
     Create2,
+    /// Represents an EOF contract creation operation.
+    EOFCreate,
 }
 
 impl CallKind {
@@ -380,13 +474,14 @@ impl CallKind {
             Self::AuthCall => "AUTHCALL",
             Self::Create => "CREATE",
             Self::Create2 => "CREATE2",
+            Self::EOFCreate => "EOF_CREATE",
         }
     }
 
     /// Returns true if the call is a create
     #[inline]
     pub const fn is_any_create(&self) -> bool {
-        matches!(self, Self::Create | Self::Create2)
+        matches!(self, Self::Create | Self::Create2 | Self::EOFCreate)
     }
 
     /// Returns true if the call is a delegate of some sorts
@@ -417,10 +512,10 @@ impl std::fmt::Display for CallKind {
 impl From<CallScheme> for CallKind {
     fn from(scheme: CallScheme) -> Self {
         match scheme {
-            CallScheme::Call => Self::Call,
-            CallScheme::StaticCall => Self::StaticCall,
+            CallScheme::Call | CallScheme::ExtCall => Self::Call,
+            CallScheme::StaticCall | CallScheme::ExtStaticCall => Self::StaticCall,
+            CallScheme::DelegateCall | CallScheme::ExtDelegateCall => Self::DelegateCall,
             CallScheme::CallCode => Self::CallCode,
-            CallScheme::DelegateCall => Self::DelegateCall,
         }
     }
 }
@@ -442,8 +537,7 @@ impl From<CallKind> for ActionType {
             | CallKind::DelegateCall
             | CallKind::CallCode
             | CallKind::AuthCall => Self::Call,
-            CallKind::Create => Self::Create,
-            CallKind::Create2 => Self::Create,
+            CallKind::Create | CallKind::Create2 | CallKind::EOFCreate => Self::Create,
         }
     }
 }
@@ -455,7 +549,7 @@ impl From<CallKind> for CallType {
             CallKind::StaticCall => Self::StaticCall,
             CallKind::CallCode => Self::CallCode,
             CallKind::DelegateCall => Self::DelegateCall,
-            CallKind::Create | CallKind::Create2 => Self::None,
+            CallKind::Create | CallKind::Create2 | CallKind::EOFCreate => Self::None,
             CallKind::AuthCall => Self::AuthCall,
         }
     }
@@ -470,14 +564,41 @@ pub(crate) struct CallTraceStepStackItem<'a> {
     pub(crate) call_child_id: Option<usize>,
 }
 
-/// Ordering enum for calls and logs
+/// Ordering enum for calls, logs and steps
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum LogCallOrder {
+pub enum TraceMemberOrder {
     /// Contains the index of the corresponding log
     Log(usize),
     /// Contains the index of the corresponding trace node
     Call(usize),
+    /// Contains the index of the corresponding step, if those are being traced
+    Step(usize),
+}
+
+/// Represents a decoded internal function call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DecodedInternalCall {
+    /// Name of the internal function.
+    pub func_name: String,
+    /// Input arguments of the internal function.
+    pub args: Option<Vec<String>>,
+    /// Optional decoded return data.
+    pub return_data: Option<Vec<String>>,
+}
+
+/// Represents a decoded trace step. Currently two formats are supported.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum DecodedTraceStep {
+    /// Decoded internal function call. Displayed similarly to external calls.
+    ///
+    /// Keeps decoded internal call data and an index of the step where the internal call execution
+    /// ends.
+    InternalCall(DecodedInternalCall, usize),
+    /// Arbitrary line reperesenting the step. Might be used for displaying individual opcodes.
+    Line(String),
 }
 
 /// Represents a tracked call step during execution
@@ -489,6 +610,8 @@ pub struct CallTraceStep {
     pub depth: u64,
     /// Program counter before step execution
     pub pc: usize,
+    /// Code section index before step execution
+    pub code_section_idx: usize,
     /// Opcode to be executed
     #[cfg_attr(feature = "serde", serde(with = "opcode_serde"))]
     pub op: OpCode,
@@ -498,16 +621,18 @@ pub struct CallTraceStep {
     pub stack: Option<Vec<U256>>,
     /// The new stack items placed by this step if any
     pub push_stack: Option<Vec<U256>>,
-    /// All allocated memory in a step
+    /// Memory before step execution.
     ///
-    /// This will be empty if memory capture is disabled
-    pub memory: RecordedMemory,
-    /// Size of memory at the beginning of the step
-    pub memory_size: usize,
+    /// This will be `None` only if memory capture is disabled.
+    pub memory: Option<RecordedMemory>,
+    /// Returndata before step execution
+    pub returndata: Bytes,
     /// Remaining gas before step execution
     pub gas_remaining: u64,
     /// Gas refund counter before step execution
     pub gas_refund_counter: u64,
+    /// Total gas used before step execution
+    pub gas_used: u64,
     // Fields filled in `step_end`
     /// Gas cost of step execution
     pub gas_cost: u64,
@@ -517,6 +642,10 @@ pub struct CallTraceStep {
     ///
     /// This is set after the step was executed.
     pub status: InstructionResult,
+    /// Immediate bytes of the step
+    pub immediate_bytes: Option<Bytes>,
+    /// Optional complementary decoded step data.
+    pub decoded: Option<DecodedTraceStep>,
 }
 
 // === impl CallTraceStep ===
@@ -551,7 +680,7 @@ impl CallTraceStep {
         }
 
         if opts.is_memory_enabled() {
-            log.memory = Some(self.memory.memory_chunks());
+            log.memory = self.memory.as_ref().map(RecordedMemory::memory_chunks);
         }
 
         log
@@ -560,26 +689,22 @@ impl CallTraceStep {
     /// Returns true if the step is a STOP opcode
     #[inline]
     pub(crate) const fn is_stop(&self) -> bool {
-        // TODO: "what is stop opcode here?"
-        false
-        // matches!(self.op.get(), opcode::STOP)
+        matches!(self.op.get(), opcode::STOP)
     }
 
     /// Returns true if the step is a call operation, any of
     /// CALL, CALLCODE, DELEGATECALL, STATICCALL, CREATE, CREATE2
     #[inline]
     pub(crate) const fn is_calllike_op(&self) -> bool {
-        //TODO: "what is call-like opcode?"
-        false
-        // matches!(
-        //     self.op.get(),
-        //     opcode::CALL
-        //         | opcode::DELEGATECALL
-        //         | opcode::STATICCALL
-        //         | opcode::CREATE
-        //         | opcode::CALLCODE
-        //         | opcode::CREATE2
-        // )
+        matches!(
+            self.op.get(),
+            opcode::CALL
+                | opcode::DELEGATECALL
+                | opcode::STATICCALL
+                | opcode::CREATE
+                | opcode::CALLCODE
+                | opcode::CREATE2
+        )
     }
 
     // Returns true if the status code is an error or revert, See [InstructionResult::Revert]
@@ -637,6 +762,10 @@ pub struct RecordedMemory(pub(crate) Bytes);
 impl RecordedMemory {
     #[inline]
     pub(crate) fn new(mem: &[u8]) -> Self {
+        if mem.is_empty() {
+            return Self(Bytes::new());
+        }
+
         Self(Bytes::copy_from_slice(mem))
     }
 
@@ -652,29 +781,21 @@ impl RecordedMemory {
         self.0
     }
 
-    #[inline]
-    pub(crate) fn resize(&mut self, len: usize) {
-        if len <= self.len() {
-            return self.0.truncate(len);
-        }
-        let mut data = self.0.to_vec();
-        data.resize(len, 0);
-        self.0 = Bytes::from(data);
-    }
-
-    /// Returns the size of the memory
+    /// Returns the size of the memory.
     #[inline]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Returns whether the memory is empty
+    /// Returns whether the memory is empty.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    /// Converts the memory into 32byte hex chunks
+    /// Formats memory data into a list of 32-byte hex-encoded chunks.
+    ///
+    /// See: <https://github.com/ethereum/go-ethereum/blob/366d2169fbc0e0f803b68c042b77b6b480836dbc/eth/tracers/logger/logger.go#L450-L452>
     #[inline]
     pub fn memory_chunks(&self) -> Vec<String> {
         convert_memory(self.as_bytes())

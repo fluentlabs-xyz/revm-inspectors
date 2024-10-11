@@ -1,4 +1,4 @@
-use super::types::{CallTrace, CallTraceNode, LogCallOrder};
+use super::types::{CallTrace, CallTraceNode, TraceMemberOrder};
 
 /// An arena of recorded traces.
 ///
@@ -18,12 +18,17 @@ impl Default for CallTraceArena {
 }
 
 impl CallTraceArena {
-    /// Returns the nodes in the arena
+    /// Returns the nodes in the arena.
     pub fn nodes(&self) -> &[CallTraceNode] {
         &self.arena
     }
 
-    /// Consumes the arena and returns the nodes
+    /// Returns a mutable reference to the nodes in the arena.
+    pub fn nodes_mut(&mut self) -> &mut Vec<CallTraceNode> {
+        &mut self.arena
+    }
+
+    /// Consumes the arena and returns the nodes.
     pub fn into_nodes(self) -> Vec<CallTraceNode> {
         self.arena
     }
@@ -70,7 +75,7 @@ impl CallTraceArena {
                     if kind.is_attach_to_parent() {
                         let parent = &mut self.arena[entry];
                         let trace_location = parent.children.len();
-                        parent.ordering.push(LogCallOrder::Call(trace_location));
+                        parent.ordering.push(TraceMemberOrder::Call(trace_location));
                         parent.children.push(id);
                     }
 

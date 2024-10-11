@@ -1,16 +1,17 @@
 use crate::tracing::{FourByteInspector, TracingInspector, TracingInspectorConfig};
-use alloy_primitives::{Address, Log, U256};
-use alloy_rpc_types::trace::geth::{
+use alloy_primitives::{map::HashMap, Address, Log, U256};
+use alloy_rpc_types_trace::geth::{
     mux::{MuxConfig, MuxFrame},
     CallConfig, FourByteFrame, GethDebugBuiltInTracerType, GethDebugTracerConfig, GethTrace,
     NoopFrame, PreStateConfig,
 };
 use revm::{
-    interpreter::{CallInputs, CallOutcome, CreateInputs, CreateOutcome, Interpreter},
+    interpreter::{
+        CallInputs, CallOutcome, CreateInputs, CreateOutcome, EOFCreateInputs, Interpreter,
+    },
     primitives::ResultAndState,
     Database, DatabaseRef, EvmContext, Inspector,
 };
-use std::collections::HashMap;
 use thiserror::Error;
 
 /// Mux tracing inspector that runs and collects results of multiple inspectors at once.
@@ -35,20 +36,20 @@ impl MuxInspector {
 
     /// Try converting this [MuxInspector] into a [MuxFrame].
     pub fn try_into_mux_frame<DB: DatabaseRef>(
-        self,
+        &self,
         result: &ResultAndState,
         db: &DB,
     ) -> Result<MuxFrame, DB::Error> {
-        let mut frame = HashMap::with_capacity(self.0.len());
-        for (tracer_type, inspector) in self.0 {
+        let mut frame = HashMap::with_capacity_and_hasher(self.0.len(), Default::default());
+        for (tracer_type, inspector) in &self.0 {
             let trace = match inspector {
                 DelegatingInspector::FourByte(inspector) => FourByteFrame::from(inspector).into(),
                 DelegatingInspector::Call(config, inspector) => inspector
-                    .into_geth_builder()
-                    .geth_call_traces(config, result.result.gas_used())
+                    .geth_builder()
+                    .geth_call_traces(*config, result.result.gas_used())
                     .into(),
                 DelegatingInspector::Prestate(config, inspector) => {
-                    inspector.into_geth_builder().geth_prestate_traces(result, config, db)?.into()
+                    inspector.geth_builder().geth_prestate_traces(result, config, db)?.into()
                 }
                 DelegatingInspector::Noop => NoopFrame::default().into(),
                 DelegatingInspector::Mux(inspector) => {
@@ -56,7 +57,7 @@ impl MuxInspector {
                 }
             };
 
-            frame.insert(tracer_type, trace);
+            frame.insert(*tracer_type, trace);
         }
 
         Ok(MuxFrame(frame))
@@ -89,9 +90,9 @@ where
     }
 
     #[inline]
-    fn log(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+    fn log(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>, log: &Log) {
         for (_, inspector) in &mut self.0 {
-            inspector.log(context, log);
+            inspector.log(interp, context, log);
         }
     }
 
@@ -156,6 +157,36 @@ where
     }
 
     #[inline]
+    fn eofcreate(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        for (_, inspector) in &mut self.0 {
+            if let Some(outcome) = inspector.eofcreate(context, inputs) {
+                return Some(outcome);
+            }
+        }
+
+        None
+    }
+
+    #[inline]
+    fn eofcreate_end(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        let mut outcome = outcome;
+        for (_, inspector) in &mut self.0 {
+            outcome = inspector.eofcreate_end(context, inputs, outcome);
+        }
+
+        outcome
+    }
+
+    #[inline]
     fn selfdestruct(&mut self, contract: Address, target: Address, value: U256) {
         for (_, inspector) in &mut self.0 {
             inspector.selfdestruct::<DB>(contract, target, value);
@@ -196,6 +227,10 @@ impl DelegatingInspector {
                 );
 
                 Ok(DelegatingInspector::Call(call_config, inspector))
+            }
+            GethDebugBuiltInTracerType::FlatCallTracer => {
+                // TODO support flat call tracer in mux
+                return Err(Error::UnexpectedConfig(tracer_type));
             }
             GethDebugBuiltInTracerType::PreStateTracer => {
                 let prestate_config = tracer_config
@@ -268,13 +303,18 @@ impl DelegatingInspector {
     }
 
     #[inline]
-    fn log<DB: Database>(&mut self, context: &mut EvmContext<DB>, log: &Log) {
+    fn log<DB: Database>(
+        &mut self,
+        interp: &mut Interpreter,
+        context: &mut EvmContext<DB>,
+        log: &Log,
+    ) {
         match self {
-            DelegatingInspector::FourByte(inspector) => inspector.log(context, log),
-            DelegatingInspector::Call(_, inspector) => inspector.log(context, log),
-            DelegatingInspector::Prestate(_, inspector) => inspector.log(context, log),
+            DelegatingInspector::FourByte(inspector) => inspector.log(interp, context, log),
+            DelegatingInspector::Call(_, inspector) => inspector.log(interp, context, log),
+            DelegatingInspector::Prestate(_, inspector) => inspector.log(interp, context, log),
             DelegatingInspector::Noop => {}
-            DelegatingInspector::Mux(inspector) => inspector.log(context, log),
+            DelegatingInspector::Mux(inspector) => inspector.log(interp, context, log),
         }
     }
 
@@ -351,6 +391,47 @@ impl DelegatingInspector {
             }
             DelegatingInspector::Noop => outcome,
             DelegatingInspector::Mux(inspector) => inspector.create_end(context, inputs, outcome),
+        }
+    }
+
+    #[inline]
+    fn eofcreate<DB: Database>(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &mut EOFCreateInputs,
+    ) -> Option<CreateOutcome> {
+        match self {
+            DelegatingInspector::FourByte(inspector) => inspector.eofcreate(context, inputs),
+            DelegatingInspector::Call(_, inspector) => inspector.eofcreate(context, inputs),
+            DelegatingInspector::Prestate(_, inspector) => inspector.eofcreate(context, inputs),
+            DelegatingInspector::Noop => None,
+            DelegatingInspector::Mux(inspector) => inspector.eofcreate(context, inputs),
+        };
+
+        None
+    }
+
+    #[inline]
+    fn eofcreate_end<DB: Database>(
+        &mut self,
+        context: &mut EvmContext<DB>,
+        inputs: &EOFCreateInputs,
+        outcome: CreateOutcome,
+    ) -> CreateOutcome {
+        match self {
+            DelegatingInspector::FourByte(inspector) => {
+                inspector.eofcreate_end(context, inputs, outcome)
+            }
+            DelegatingInspector::Call(_, inspector) => {
+                inspector.eofcreate_end(context, inputs, outcome)
+            }
+            DelegatingInspector::Prestate(_, inspector) => {
+                inspector.eofcreate_end(context, inputs, outcome)
+            }
+            DelegatingInspector::Noop => outcome,
+            DelegatingInspector::Mux(inspector) => {
+                inspector.eofcreate_end(context, inputs, outcome)
+            }
         }
     }
 
