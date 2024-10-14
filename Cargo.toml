@@ -25,21 +25,18 @@ alloy-sol-types = "0.7"
 alloy-primitives = "0.7"
 alloy-rpc-types = { version = "0.1", features = ["eth", "trace"] }
 
-revm = { package = "revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "feat/fuel-vm", features = [
-    "std",
-    "hashbrown",
-    "blst",
-    "rwasm",
-], default-features = false }
-#revm = { package = "revm", path = "../fluentbase/revm/crates/revm", features = [
+#revm = { package = "revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "feat/fuel-vm", features = [
 #    "std",
 #    "hashbrown",
 #    "blst",
 #    "rwasm",
 #], default-features = false }
-#revm = { version = "9.0", git = "https://github.com/bluealloy/revm.git", rev = "41e2f7f", default-features = false, features = [
-#    "std",
-#] }
+revm = { package = "revm", path = "../fluentbase/revm/crates/revm", features = [
+    "std",
+    "hashbrown",
+    "blst",
+    "rwasm",
+], default-features = false }
 
 anstyle = "1.0"
 colorchoice = "1.0"
