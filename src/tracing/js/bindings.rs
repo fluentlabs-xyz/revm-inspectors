@@ -1,14 +1,12 @@
 //! Type bindings for js tracing inspector
 
 use crate::tracing::{
-    js::{
-        builtins::{
-            address_to_byte_array, address_to_byte_array_value, bytes_to_address, bytes_to_hash,
-            from_buf_value, to_bigint, to_byte_array, to_byte_array_value,
-        },
-        TransactionContext,
+    js::builtins::{
+        address_to_byte_array, address_to_byte_array_value, bytes_to_address, bytes_to_hash,
+        from_buf_value, to_bigint, to_byte_array, to_byte_array_value,
     },
     types::CallKind,
+    TransactionContext,
 };
 use alloy_primitives::{Address, Bytes, B256, U256};
 use boa_engine::{
@@ -394,8 +392,8 @@ impl OpObj {
         let to_string = FunctionObjectBuilder::new(
             context.realm(),
             NativeFunction::from_copy_closure(move |_this, _args, _ctx| {
-                // we always want an OpCode, even it is unknown because it could be an additional
-                // opcode that not a known constant
+                // We always want an OpCode, even it is unknown because it could be an additional
+                // opcode that not a known constant.
                 let op = unsafe { OpCode::new_unchecked(value) };
                 let s = op.to_string();
                 Ok(JsValue::from(js_string!(s)))
@@ -955,7 +953,7 @@ where
         self.0.storage_ref(_address, _index).map_err(|e| e.to_string())
     }
 
-    fn block_hash_ref(&self, _number: U256) -> Result<B256, Self::Error> {
+    fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
         self.0.block_hash_ref(_number).map_err(|e| e.to_string())
     }
 }

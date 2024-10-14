@@ -1,8 +1,8 @@
 //! Geth tests
 
 use crate::utils::inspect;
-use alloy_primitives::{hex, Address, Bytes};
-use alloy_rpc_types::trace::geth::{
+use alloy_primitives::{hex, map::HashMap, Address, Bytes};
+use alloy_rpc_types_trace::geth::{
     mux::MuxConfig, CallConfig, GethDebugBuiltInTracerType, GethDebugTracerConfig, GethTrace,
     PreStateConfig,
 };
@@ -15,7 +15,6 @@ use revm::{
     DatabaseCommit,
 };
 use revm_inspectors::tracing::{MuxInspector, TracingInspector, TracingInspectorConfig};
-use std::collections::HashMap;
 
 #[test]
 fn test_geth_calltracer_logs() {
@@ -104,7 +103,7 @@ fn test_geth_calltracer_logs() {
 
     let call_frame = insp
         .with_transaction_gas_used(res.result.gas_used())
-        .into_geth_builder()
+        .geth_builder()
         .geth_call_traces(CallConfig::default().with_log(), res.result.gas_used());
 
     // three subcalls
@@ -184,12 +183,12 @@ fn test_geth_mux_tracer() {
     let prestate_config = PreStateConfig { diff_mode: Some(false) };
 
     let nested_call_config = CallConfig { only_top_call: Some(true), with_log: Some(false) };
-    let nested_mux_config = MuxConfig(HashMap::from([(
+    let nested_mux_config = MuxConfig(HashMap::from_iter([(
         GethDebugBuiltInTracerType::CallTracer,
         Some(GethDebugTracerConfig(serde_json::to_value(nested_call_config).unwrap())),
     )]));
 
-    let config = MuxConfig(HashMap::from([
+    let config = MuxConfig(HashMap::from_iter([
         (GethDebugBuiltInTracerType::FourByteTracer, None),
         (
             GethDebugBuiltInTracerType::CallTracer,
@@ -301,19 +300,38 @@ fn test_geth_inspector_reset() {
         },
     );
 
-    assert_eq!(insp.get_traces().nodes().first().unwrap().trace.gas_limit, 0);
+    assert_eq!(insp.traces().nodes().first().unwrap().trace.gas_limit, 0);
 
     // first run inspector
-    let (res, _) = inspect(&mut db, env.clone(), &mut insp).unwrap();
+    let (res, env) = inspect(&mut db, env.clone(), &mut insp).unwrap();
     assert!(res.result.is_success());
-    assert_eq!(insp.get_traces().nodes().first().unwrap().trace.gas_limit, 1000000);
+    assert_eq!(
+        insp.clone()
+            .with_transaction_gas_limit(env.tx.gas_limit)
+            .traces()
+            .nodes()
+            .first()
+            .unwrap()
+            .trace
+            .gas_limit,
+        1000000
+    );
 
     // reset the inspector
     insp.fuse();
-    assert_eq!(insp.get_traces().nodes().first().unwrap().trace.gas_limit, 0);
+    assert_eq!(insp.traces().nodes().first().unwrap().trace.gas_limit, 0);
 
     // second run inspector after reset
-    let (res, _) = inspect(&mut db, env, &mut insp).unwrap();
+    let (res, env) = inspect(&mut db, env, &mut insp).unwrap();
     assert!(res.result.is_success());
-    assert_eq!(insp.get_traces().nodes().first().unwrap().trace.gas_limit, 1000000);
+    assert_eq!(
+        insp.with_transaction_gas_limit(env.tx.gas_limit)
+            .traces()
+            .nodes()
+            .first()
+            .unwrap()
+            .trace
+            .gas_limit,
+        1000000
+    );
 }

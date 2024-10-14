@@ -4,8 +4,8 @@ use revm::{
     db::{CacheDB, EmptyDB},
     inspector_handle_register,
     primitives::{
-        BlockEnv, EVMError, Env, EnvWithHandlerCfg, ExecutionResult, HandlerCfg, Output,
-        ResultAndState, SpecId, TransactTo, TxEnv,
+        BlockEnv, EVMError, Env, EnvWithHandlerCfg, ExecutionResult, HandlerCfg, ResultAndState,
+        SpecId, TransactTo, TxEnv,
     },
     Database, DatabaseCommit, GetInspector,
 };
@@ -45,20 +45,28 @@ impl TestEvm {
         data: Bytes,
         inspector: I,
     ) -> Result<Address, EVMError<Infallible>> {
+        let (_, address) = self.try_deploy(data, inspector)?;
+        Ok(address.expect("failed to deploy contract"))
+    }
+
+    pub fn try_deploy<I: for<'a> GetInspector<&'a mut TestDb>>(
+        &mut self,
+        data: Bytes,
+        inspector: I,
+    ) -> Result<(ExecutionResult, Option<Address>), EVMError<Infallible>> {
         self.env.tx.data = data;
         self.env.tx.transact_to = TransactTo::Create;
 
         let (ResultAndState { result, state }, env) = self.inspect(inspector)?;
         self.db.commit(state);
-        let address = match result {
-            ExecutionResult::Success { output, .. } => match output {
-                Output::Create(_, address) => address.unwrap(),
-                _ => panic!("Create failed"),
-            },
-            _ => panic!("Execution failed"),
-        };
         self.env = env;
-        Ok(address)
+        match &result {
+            ExecutionResult::Success { output, .. } => {
+                let address = output.address().copied();
+                Ok((result, address))
+            }
+            _ => Ok((result, None)),
+        }
     }
 
     pub fn call<I: for<'a> GetInspector<&'a mut TestDb>>(
@@ -105,16 +113,26 @@ where
 }
 
 pub fn write_traces(tracer: &TracingInspector) -> String {
-    write_traces_with(tracer, ColorChoice::Never)
+    write_traces_with(tracer, ColorChoice::Never, false)
 }
 
-pub fn write_traces_with(tracer: &TracingInspector, color: ColorChoice) -> String {
-    let mut w = revm_inspectors::tracing::TraceWriter::new(Vec::<u8>::new()).use_colors(color);
-    w.write_arena(tracer.get_traces()).expect("failed to write traces to Vec<u8>");
+pub fn write_traces_with_bytecodes(tracer: &TracingInspector) -> String {
+    write_traces_with(tracer, ColorChoice::Never, true)
+}
+
+pub fn write_traces_with(
+    tracer: &TracingInspector,
+    color: ColorChoice,
+    write_bytecodes: bool,
+) -> String {
+    let mut w = revm_inspectors::tracing::TraceWriter::new(Vec::<u8>::new())
+        .use_colors(color)
+        .write_bytecodes(write_bytecodes);
+    w.write_arena(tracer.traces()).expect("failed to write traces to Vec<u8>");
     String::from_utf8(w.into_writer()).expect("trace writer wrote invalid UTF-8")
 }
 
 pub fn print_traces(tracer: &TracingInspector) {
     // Use `println!` so that the output is captured by the test runner.
-    println!("{}", write_traces_with(tracer, ColorChoice::Auto));
+    println!("{}", write_traces_with(tracer, ColorChoice::Auto, false));
 }

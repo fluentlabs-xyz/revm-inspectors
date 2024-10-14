@@ -4,14 +4,14 @@ use crate::tracing::{
     utils::load_account_code,
     TracingInspectorConfig,
 };
-use alloy_primitives::{Address, U64};
-use alloy_rpc_types::{trace::parity::*, TransactionInfo};
+use alloy_primitives::{map::HashSet, Address, U256, U64};
+use alloy_rpc_types_eth::TransactionInfo;
+use alloy_rpc_types_trace::parity::*;
 use revm::{
     db::DatabaseRef,
-    interpreter::{opcode, OpCode},
     primitives::{Account, ExecutionResult, ResultAndState, SpecId, KECCAK_EMPTY},
 };
-use std::collections::{HashSet, VecDeque};
+use std::{collections::VecDeque, iter::Peekable};
 
 /// A type for creating parity style traces
 ///
@@ -151,19 +151,11 @@ impl ParityTraceBuilder {
         res: &ExecutionResult,
         trace_types: &HashSet<TraceType>,
     ) -> TraceResults {
-        let gas_used = res.gas_used();
         let output = res.output().cloned().unwrap_or_default();
 
         let (trace, vm_trace, state_diff) = self.into_trace_type_traces(trace_types);
 
-        let mut trace =
-            TraceResults { output, trace: trace.unwrap_or_default(), vm_trace, state_diff };
-
-        // we're setting the gas used of the root trace explicitly to the gas used of the execution
-        // result
-        trace.set_root_trace_gas_used(gas_used);
-
-        trace
+        TraceResults { output, trace: trace.unwrap_or_default(), vm_trace, state_diff }
     }
 
     /// Consumes the inspector and returns the trace results according to the configured trace
@@ -220,44 +212,53 @@ impl ParityTraceBuilder {
             return (None, None, None);
         }
 
-        let with_traces = trace_types.contains(&TraceType::Trace);
         let with_diff = trace_types.contains(&TraceType::StateDiff);
 
-        let vm_trace =
-            if trace_types.contains(&TraceType::VmTrace) { Some(self.vm_trace()) } else { None };
+        // early return for StateDiff-only case
+        if trace_types.len() == 1 && with_diff {
+            return (None, None, Some(StateDiff::default()));
+        }
 
-        let mut traces = Vec::with_capacity(if with_traces { self.nodes.len() } else { 0 });
+        let vm_trace = trace_types.contains(&TraceType::VmTrace).then(|| self.vm_trace());
 
-        for node in self.iter_traceable_nodes() {
-            let trace_address = self.trace_address(node.idx);
+        let traces = trace_types.contains(&TraceType::Trace).then(|| {
+            let mut traces = Vec::with_capacity(self.nodes.len());
+            // Boolean marker to track if sorting for selfdestruct is needed
+            let mut sorting_selfdestruct = false;
 
-            if with_traces {
+            for node in self.iter_traceable_nodes() {
+                let trace_address = self.trace_address(node.idx);
                 let trace = node.parity_transaction_trace(trace_address);
                 traces.push(trace);
 
-                // check if the trace node is a selfdestruct
                 if node.is_selfdestruct() {
                     // selfdestructs are not recorded as individual call traces but are derived from
                     // the call trace and are added as additional `TransactionTrace` objects in the
                     // trace array
                     let addr = {
                         let last = traces.last_mut().expect("exists");
-                        let mut addr = last.trace_address.clone();
+                        let mut addr = Vec::with_capacity(last.trace_address.len() + 1);
+                        addr.extend_from_slice(&last.trace_address);
                         addr.push(last.subtraces);
-                        // need to account for the additional selfdestruct trace
                         last.subtraces += 1;
                         addr
                     };
 
                     if let Some(trace) = node.parity_selfdestruct_trace(addr) {
                         traces.push(trace);
+                        sorting_selfdestruct = true;
                     }
                 }
             }
-        }
 
-        let traces = with_traces.then_some(traces);
-        let diff = with_diff.then_some(StateDiff::default());
+            // Sort the traces only if a selfdestruct trace was encountered
+            if sorting_selfdestruct {
+                traces.sort_unstable_by(|a, b| a.trace_address.cmp(&b.trace_address));
+            }
+            traces
+        });
+
+        let diff = with_diff.then(StateDiff::default);
 
         (traces, vm_trace, diff)
     }
@@ -272,7 +273,8 @@ impl ParityTraceBuilder {
                 .into_iter()
                 .zip(trace_addresses)
                 .filter(|(node, _)| !node.is_precompile())
-                .map(|(node, trace_address)| (node.parity_transaction_trace(trace_address), node)),
+                .map(|(node, trace_address)| (node.parity_transaction_trace(trace_address), node))
+                .peekable(),
         }
     }
 
@@ -371,11 +373,10 @@ impl ParityTraceBuilder {
             val: storage_change.value,
         });
 
-        let maybe_memory = if step.memory.is_empty() {
-            None
-        } else {
-            Some(MemoryDelta { off: step.memory_size, data: step.memory.as_bytes().clone() })
-        };
+        let maybe_memory = step
+            .memory
+            .as_ref()
+            .map(|memory| MemoryDelta { off: memory.len(), data: memory.as_bytes().clone() });
 
         let maybe_execution = Some(VmExecutedOperation {
             used: step.gas_remaining,
@@ -384,12 +385,9 @@ impl ParityTraceBuilder {
             store: maybe_storage,
         });
 
-        let cost = 0u64;
-        // TODO: "add gas cost calculation?"
-
         VmInstruction {
             pc: step.pc,
-            cost: cost as u64, // step.gas_cost,
+            cost: step.gas_cost,
             ex: maybe_execution,
             sub: maybe_sub_call,
             op: Some(step.op.to_string()),
@@ -399,8 +397,8 @@ impl ParityTraceBuilder {
 }
 
 /// An iterator for [TransactionTrace]s
-struct TransactionTraceIter<Iter> {
-    iter: Iter,
+struct TransactionTraceIter<Iter: Iterator> {
+    iter: Peekable<Iter>,
     next_selfdestruct: Option<TransactionTrace>,
 }
 
@@ -411,9 +409,15 @@ where
     type Item = TransactionTrace;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(selfdestruct) = self.next_selfdestruct.take() {
-            return Some(selfdestruct);
+        // ensure the selfdestruct trace is emitted just at the ending of the same depth
+        if let Some(selfdestruct) = &self.next_selfdestruct {
+            if self.iter.peek().map_or(true, |(next_trace, _)| {
+                selfdestruct.trace_address < next_trace.trace_address
+            }) {
+                return self.next_selfdestruct.take();
+            }
         }
+
         let (mut trace, node) = self.iter.next()?;
         if node.is_selfdestruct() {
             // since selfdestructs are emitted as additional trace, increase the trace count
@@ -456,14 +460,21 @@ where
 
         let db_acc = db.basic_ref(addr)?.unwrap_or_default();
 
-        let code_hash = if db_acc.code_hash != KECCAK_EMPTY { db_acc.code_hash } else { continue };
+        curr_ref.code = if let Some(code) = db_acc.code {
+            code.original_bytes()
+        } else {
+            let code_hash =
+                if db_acc.code_hash != KECCAK_EMPTY { db_acc.code_hash } else { continue };
 
-        curr_ref.code = db.code_by_hash_ref(code_hash)?.original_bytes();
+            db.code_by_hash_ref(code_hash)?.original_bytes()
+        };
     }
 
     Ok(())
 }
 
+/// Populates [StateDiff] given iterator over [Account]s and a [DatabaseRef].
+///
 /// Loops over all state accounts in the accounts diff that contains all accounts that are included
 /// in the [ExecutionResult] state map and compares the balance and nonce against what's in the
 /// `db`, which should point to the beginning of the transaction.
@@ -488,9 +499,13 @@ where
         let addr = *addr;
         let entry = state_diff.entry(addr).or_default();
 
+        // we need to fetch the account from the db
+        let db_acc = db.basic_ref(addr)?.unwrap_or_default();
+
         // we check if this account was created during the transaction
-        if changed_acc.is_created() {
-            // This only applies to newly created accounts
+        // where the smart contract was not touched before being created (no balance)
+        if changed_acc.is_created() && db_acc.balance == U256::ZERO {
+            // This only applies to newly created accounts without balance
             // A non existing touched account (e.g. `to` that does not exist) is excluded here
             entry.balance = Delta::Added(changed_acc.info.balance);
             entry.nonce = Delta::Added(U64::from(changed_acc.info.nonce));
@@ -505,8 +520,14 @@ where
                 entry.storage.insert((*key).into(), Delta::Added(slot.present_value.into()));
             }
         } else {
-            // account may exist or not, we need to fetch the account from the db
-            let db_acc = db.basic_ref(addr)?.unwrap_or_default();
+            // we check if this account was created during the transaction
+            // where the smart contract was touched before being created (has balance)
+            if changed_acc.is_created() {
+                let original_account_code = load_account_code(&db, &db_acc).unwrap_or_default();
+                let present_account_code =
+                    load_account_code(&db, &changed_acc.info).unwrap_or_default();
+                entry.code = Delta::changed(original_account_code, present_account_code);
+            }
 
             // update _changed_ storage values
             for (key, slot) in changed_acc.storage.iter().filter(|(_, slot)| slot.is_changed()) {
@@ -547,71 +568,107 @@ where
     Ok(())
 }
 
-/// Returns the number of items pushed on the stack by a given opcode.
-/// This used to determine how many stack etries to put in the `push` element
-/// in a parity vmTrace.
-/// The value is obvious for most opcodes, but SWAP* and DUP* are a bit weird,
-/// and we handle those as they are handled in parity vmtraces.
-/// For reference: <https://github.com/ledgerwatch/erigon/blob/9b74cf0384385817459f88250d1d9c459a18eab1/turbo/jsonrpc/trace_adhoc.go#L451>
-pub(crate) const fn stack_push_count(step_op: OpCode) -> usize {
-    // TODO: "add stack push counts?"
-    let step_op = step_op.get();
-    match step_op {
-        // opcode::PUSH0..=opcode::PUSH32 => 1,
-        // opcode::SWAP1..=opcode::SWAP16 => (step_op - opcode::SWAP1) as usize + 2,
-        // opcode::DUP1..=opcode::DUP16 => (step_op - opcode::DUP1) as usize + 2,
-        // opcode::CALLDATALOAD
-        // | opcode::SLOAD
-        // | opcode::MLOAD
-        // | opcode::CALLDATASIZE
-        // | opcode::LT
-        // | opcode::GT
-        // | opcode::DIV
-        // | opcode::SDIV
-        // | opcode::SAR
-        // | opcode::AND
-        // | opcode::EQ
-        // | opcode::CALLVALUE
-        // | opcode::ISZERO
-        // | opcode::ADD
-        // | opcode::EXP
-        // | opcode::CALLER
-        // | opcode::KECCAK256
-        // | opcode::SUB
-        // | opcode::ADDRESS
-        // | opcode::GAS
-        // | opcode::MUL
-        // | opcode::RETURNDATASIZE
-        // | opcode::NOT
-        // | opcode::SHR
-        // | opcode::SHL
-        // | opcode::EXTCODESIZE
-        // | opcode::SLT
-        // | opcode::OR
-        // | opcode::NUMBER
-        // | opcode::PC
-        // | opcode::TIMESTAMP
-        // | opcode::BALANCE
-        // | opcode::SELFBALANCE
-        // | opcode::MULMOD
-        // | opcode::ADDMOD
-        // | opcode::BASEFEE
-        // | opcode::BLOCKHASH
-        // | opcode::BYTE
-        // | opcode::XOR
-        // | opcode::ORIGIN
-        // | opcode::CODESIZE
-        // | opcode::MOD
-        // | opcode::SIGNEXTEND
-        // | opcode::GASLIMIT
-        // | opcode::DIFFICULTY
-        // | opcode::SGT
-        // | opcode::GASPRICE
-        // | opcode::MSIZE
-        // | opcode::EXTCODEHASH
-        // | opcode::SMOD
-        // | opcode::CHAINID
-        // | opcode::COINBASE => 1,
-        _ => 0,
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tracing::types::{CallKind, CallTrace};
+
+    #[test]
+    fn test_parity_suicide_simple_call() {
+        let nodes = vec![CallTraceNode {
+            trace: CallTrace {
+                kind: CallKind::Call,
+                selfdestruct_refund_target: Some(Address::ZERO),
+                ..Default::default()
+            },
+            ..Default::default()
+        }];
+
+        let traces = ParityTraceBuilder::new(nodes, None, TracingInspectorConfig::default_parity())
+            .into_transaction_traces();
+
+        assert_eq!(traces.len(), 2);
+        assert_eq!(traces[0].trace_address.len(), 0);
+        assert!(traces[0].action.is_call());
+        assert_eq!(traces[1].trace_address, vec![0]);
+        assert!(traces[1].action.is_selfdestruct());
+    }
+
+    #[test]
+    fn test_parity_suicide_with_subsequent_calls() {
+        /*
+        contract Foo {
+            function foo() public {}
+            function close(Foo f) public {
+                f.foo();
+                selfdestruct(payable(msg.sender));
+            }
+        }
+
+        contract Bar {
+            Foo foo1;
+            Foo foo2;
+
+            constructor() {
+                foo1 = new Foo();
+                foo2 = new Foo();
+            }
+
+            function close() public {
+                foo1.close(foo2);
+            }
+        }
+        */
+
+        let nodes = vec![
+            CallTraceNode {
+                parent: None,
+                children: vec![1],
+                idx: 0,
+                trace: CallTrace { depth: 0, ..Default::default() },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(0),
+                idx: 1,
+                children: vec![2],
+                trace: CallTrace {
+                    depth: 1,
+                    kind: CallKind::Call,
+                    selfdestruct_refund_target: Some(Address::ZERO),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            CallTraceNode {
+                parent: Some(1),
+                idx: 2,
+                trace: CallTrace { depth: 2, ..Default::default() },
+                ..Default::default()
+            },
+        ];
+
+        let traces = ParityTraceBuilder::new(nodes, None, TracingInspectorConfig::default_parity())
+            .into_transaction_traces();
+
+        assert_eq!(traces.len(), 4);
+
+        // [] call
+        assert_eq!(traces[0].trace_address.len(), 0);
+        assert_eq!(traces[0].subtraces, 1);
+        assert!(traces[0].action.is_call());
+
+        // [0] call
+        assert_eq!(traces[1].trace_address, vec![0]);
+        assert_eq!(traces[1].subtraces, 2);
+        assert!(traces[1].action.is_call());
+
+        // [0, 0] call
+        assert_eq!(traces[2].trace_address, vec![0, 0]);
+        assert!(traces[2].action.is_call());
+
+        // [0, 1] suicide
+        assert_eq!(traces[3].trace_address, vec![0, 1]);
+        assert!(traces[3].action.is_selfdestruct());
     }
 }
