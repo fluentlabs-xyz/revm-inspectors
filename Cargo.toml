@@ -21,9 +21,9 @@ clippy.lint_groups_priority = "allow"
 
 [dependencies]
 # eth
-alloy-sol-types = "0.7"
-alloy-primitives = "0.7"
-alloy-rpc-types = { version = "0.1", features = ["eth", "trace"] }
+alloy-sol-types = "0.8"
+alloy-primitives = "0.8"
+alloy-rpc-types = { version = "0.4", features = ["eth", "trace"] }
 
 #revm = { package = "revm", git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "feat/fuel-vm", features = [
 #    "std",
