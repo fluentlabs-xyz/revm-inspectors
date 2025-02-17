@@ -10,6 +10,11 @@ use crate::tracing::{
     types::CallKind,
     TransactionContext,
 };
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 use alloy_primitives::{Address, Bytes, Log, U256};
 pub use boa_engine::vm::RuntimeLimits;
 use boa_engine::{js_string, Context, JsError, JsObject, JsResult, JsValue, Source};
@@ -136,7 +141,7 @@ impl JsInspector {
             .as_object()
             .cloned()
             .ok_or(JsInspectorError::FaultFunctionMissing)?;
-        if !result_fn.is_callable() {
+        if !fault_fn.is_callable() {
             return Err(JsInspectorError::FaultFunctionMissing);
         }
 
@@ -213,7 +218,7 @@ impl JsInspector {
     ) -> Result<serde_json::Value, JsInspectorError>
     where
         DB: DatabaseRef,
-        <DB as DatabaseRef>::Error: std::fmt::Display,
+        <DB as DatabaseRef>::Error: core::fmt::Display,
     {
         let result = self.result(res, env, db)?;
         Ok(to_serde_value(result, &mut self.ctx)?)
@@ -228,7 +233,7 @@ impl JsInspector {
     ) -> Result<JsValue, JsInspectorError>
     where
         DB: DatabaseRef,
-        <DB as DatabaseRef>::Error: std::fmt::Display,
+        <DB as DatabaseRef>::Error: core::fmt::Display,
     {
         let ResultAndState { result, state } = res;
         let (db, _db_guard) = EvmDbRef::new(&state, db);
@@ -236,6 +241,7 @@ impl JsInspector {
         let gas_used = result.gas_used();
         let mut to = None;
         let mut output_bytes = None;
+        let mut error = None;
         match result {
             ExecutionResult::Success { output, .. } => match output {
                 Output::Call(out) => {
@@ -247,17 +253,21 @@ impl JsInspector {
                 }
             },
             ExecutionResult::Revert { output, .. } => {
+                error = Some("execution reverted".to_string());
                 output_bytes = Some(output);
             }
-            ExecutionResult::Halt { .. } => {}
+            ExecutionResult::Halt { reason, .. } => {
+                error = Some(format!("execution halted: {:?}", reason));
+            }
         };
+
+        if let TransactTo::Call(target) = env.tx.transact_to {
+            to = Some(target);
+        }
 
         let ctx = JsEvmContext {
             r#type: match env.tx.transact_to {
-                TransactTo::Call(target) => {
-                    to = Some(target);
-                    "CALL"
-                }
+                TransactTo::Call(_) => "CALL",
                 TransactTo::Create => "CREATE",
             }
             .to_string(),
@@ -269,10 +279,12 @@ impl JsInspector {
             gas_price: env.tx.gas_price.try_into().unwrap_or(u64::MAX),
             value: env.tx.value,
             block: env.block.number.try_into().unwrap_or(u64::MAX),
+            coinbase: env.block.coinbase,
             output: output_bytes.unwrap_or_default(),
             time: env.block.timestamp.to_string(),
             intrinsic_gas: 0,
             transaction_ctx: self.transaction_context,
+            error,
         };
         let ctx = ctx.into_js_object(&mut self.ctx)?;
         let db = db.into_js_object(&mut self.ctx)?;
@@ -343,21 +355,21 @@ impl JsInspector {
     /// Returns true if there's an exit function and the active call is not the root call.
     #[inline]
     fn can_call_exit(&mut self) -> bool {
-        self.enter_fn.is_some() && !self.is_root_call_active()
+        self.exit_fn.is_some() && !self.is_root_call_active()
     }
 
     /// Pushes a new call to the stack
     fn push_call(
         &mut self,
-        address: Address,
-        data: Bytes,
+        contract: Address,
+        input: Bytes,
         value: U256,
         kind: CallKind,
         caller: Address,
         gas_limit: u64,
     ) -> &CallStackItem {
         let call = CallStackItem {
-            contract: Contract { caller, contract: address, value, input: data },
+            contract: Contract { caller, contract, value, input },
             kind,
             gas_limit,
         };
@@ -381,7 +393,7 @@ impl JsInspector {
 impl<DB> Inspector<DB> for JsInspector
 where
     DB: Database + DatabaseRef,
-    <DB as DatabaseRef>::Error: std::fmt::Display,
+    <DB as DatabaseRef>::Error: core::fmt::Display,
 {
     fn step(&mut self, interp: &mut Interpreter, context: &mut EvmContext<DB>) {
         // if self.step_fn.is_none() {
@@ -446,21 +458,19 @@ where
     ) -> Option<CallOutcome> {
         // self.register_precompiles(&context.precompiles);
 
-        // determine correct `from` and `to` based on the call scheme
-        let (from, to) = match inputs.scheme {
-            CallScheme::DelegateCall | CallScheme::CallCode => {
-                (inputs.target_address, inputs.bytecode_address)
-            }
-            _ => (inputs.caller, inputs.bytecode_address),
+        // determine contract address based on the call scheme
+        let contract = match inputs.scheme {
+            CallScheme::DelegateCall | CallScheme::CallCode => inputs.target_address,
+            _ => inputs.bytecode_address,
         };
 
         let value = inputs.transfer_value().unwrap_or_default();
         self.push_call(
-            to,
+            contract,
             inputs.input.clone(),
             value,
             inputs.scheme.into(),
-            from,
+            inputs.caller,
             inputs.gas_limit,
         );
 
@@ -471,9 +481,11 @@ where
                 kind: call.kind,
                 gas: inputs.gas_limit,
             };
-            if let Err(_err) = self.try_enter(frame) {
-                todo!("return revert")
-                // return (InstructionResult::Revert, Gas::new(0), err.to_string().into());
+            if let Err(err) = self.try_enter(frame) {
+                return Some(CallOutcome::new(
+                    js_error_to_revert(err),
+                    inputs.return_memory_offset.clone(),
+                ));
             }
         }
 

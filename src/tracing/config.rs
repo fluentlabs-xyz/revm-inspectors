@@ -82,7 +82,7 @@ impl TracingInspectorConfig {
             record_steps: true,
             record_memory_snapshots: true,
             record_stack_snapshots: StackSnapshotType::Full,
-            record_state_diff: false,
+            record_state_diff: true,
             record_returndata_snapshots: true,
             record_opcodes_filter: None,
             exclude_precompile_calls: false,
@@ -91,7 +91,7 @@ impl TracingInspectorConfig {
         }
     }
 
-    /// Returns a config with everything is disabled.
+    /// Returns a config with everything disabled.
     pub const fn none() -> Self {
         Self {
             record_steps: false,
@@ -210,6 +210,21 @@ impl TracingInspectorConfig {
         Self::none()
     }
 
+    /// Merge another config into this one.
+    #[inline]
+    pub fn merge(&mut self, other: Self) -> &mut Self {
+        self.record_steps |= other.record_steps;
+        self.record_memory_snapshots |= other.record_memory_snapshots;
+        self.record_stack_snapshots = other.record_stack_snapshots;
+        self.record_state_diff |= other.record_state_diff;
+        self.record_returndata_snapshots |= other.record_returndata_snapshots;
+        self.exclude_precompile_calls |= other.exclude_precompile_calls;
+        self.record_logs |= other.record_logs;
+        self.record_opcodes_filter = self.record_opcodes_filter.or(other.record_opcodes_filter);
+        self.record_immediate_bytes |= other.record_immediate_bytes;
+        self
+    }
+
     /// Configure whether calls to precompiles should be ignored.
     ///
     /// If set to `true`, calls to precompiles without value transfers will be ignored.
@@ -325,7 +340,7 @@ impl TracingInspectorConfig {
     /// Otherwise, always returns true.
     #[inline]
     pub fn should_record_opcode(&self, op: OpCode) -> bool {
-        self.record_opcodes_filter.as_ref().map_or(true, |filter| filter.is_enabled(op))
+        self.record_opcodes_filter.as_ref().is_none_or(|filter| filter.is_enabled(op))
     }
 }
 
@@ -335,6 +350,8 @@ pub enum StackSnapshotType {
     /// Don't record stack snapshots
     #[default]
     None,
+    /// Record full, push stack
+    All,
     /// Record only the items pushed to the stack
     Pushes,
     /// Record the full stack
@@ -342,6 +359,12 @@ pub enum StackSnapshotType {
 }
 
 impl StackSnapshotType {
+    /// Returns true if this is the [StackSnapshotType::All] variant
+    #[inline]
+    pub const fn is_all(self) -> bool {
+        matches!(self, Self::All)
+    }
+
     /// Returns true if this is the [StackSnapshotType::Full] variant
     #[inline]
     pub const fn is_full(self) -> bool {

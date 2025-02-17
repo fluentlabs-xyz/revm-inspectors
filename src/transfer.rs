@@ -1,3 +1,4 @@
+use alloc::{vec, vec::Vec};
 use alloy_primitives::{address, b256, Address, Log, LogData, B256, U256};
 use alloy_sol_types::SolValue;
 use revm::{
@@ -189,7 +190,7 @@ pub struct TransferOperation {
 /// The kind of transfer operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransferKind {
-    /// A non zero value transfer CALL
+    /// A non-zero value transfer CALL
     Call,
     /// A CREATE operation
     Create,
