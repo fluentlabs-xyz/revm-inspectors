@@ -2,9 +2,7 @@
 
 use crate::tracing::{
     js::{
-        bindings::{
-            CallFrame, Contract, EvmDbRef, FrameResult, JsEvmContext, StepLog,
-        },
+        bindings::{CallFrame, Contract, EvmDbRef, FrameResult, JsEvmContext, StepLog},
         builtins::{register_builtins, to_serde_value, PrecompileList},
     },
     types::CallKind,
@@ -20,8 +18,8 @@ pub use boa_engine::vm::RuntimeLimits;
 use boa_engine::{js_string, Context, JsError, JsObject, JsResult, JsValue, Source};
 use revm::{
     interpreter::{
-        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas,
-        InstructionResult, Interpreter, InterpreterResult,
+        CallInputs, CallOutcome, CallScheme, CreateInputs, CreateOutcome, Gas, InstructionResult,
+        Interpreter, InterpreterResult,
     },
     primitives::{Env, ExecutionResult, Output, ResultAndState, TransactTo},
     ContextPrecompiles, Database, DatabaseRef, EvmContext, Inspector,
