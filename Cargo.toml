@@ -36,7 +36,7 @@ alloy-sol-types = "0.8"
 alloy-primitives = { version = "0.8", features = ["map"] }
 
 #revm = { version = "14.0.3", default-features = false, features = ["std"] }
-revm = { git = "https://github.com/fluentlabs-xyz/fluentbase", tag = "v0.1.0-dev", features = ["std", "secp256k1"], default-features = false }
+revm = { git = "https://github.com/fluentlabs-xyz/fluentbase", branch = "devel", features = ["std", "secp256k1"], default-features = false }
 
 anstyle = { version = "1.0", optional = true }
 colorchoice = "1.0"
