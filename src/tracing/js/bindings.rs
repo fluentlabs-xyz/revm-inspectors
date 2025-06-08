@@ -24,11 +24,11 @@ use boa_engine::{
 use boa_gc::{empty_trace, Finalize, Trace};
 use core::cell::RefCell;
 use revm::{
-    interpreter::{
-        opcode::{PUSH0, PUSH32},
-        OpCode, SharedMemory, Stack,
-    },
-    primitives::{AccountInfo, Bytecode, EvmState, KECCAK_EMPTY},
+    bytecode::opcode::{OpCode, PUSH0, PUSH32},
+    context_interface::DBErrorMarker,
+    interpreter::{SharedMemory, Stack},
+    primitives::KECCAK_EMPTY,
+    state::{AccountInfo, Bytecode, EvmState},
     DatabaseRef,
 };
 
@@ -283,7 +283,7 @@ impl MemoryRef {
                     let size = end - start;
                     let slice = memory
                         .0
-                        .with_inner(|mem| mem.slice(start, size).to_vec())
+                        .with_inner(|mem| mem.slice_len(start, size).to_vec())
                         .unwrap_or_default();
 
                     to_uint8_array_value(slice, ctx)
@@ -307,7 +307,7 @@ impl MemoryRef {
                     }
                     let slice = memory
                         .0
-                        .with_inner(|mem| mem.slice(offset, 32).to_vec())
+                        .with_inner(|mem| mem.slice_len(offset, 32).to_vec())
                         .unwrap_or_default();
                     to_uint8_array_value(slice, ctx)
                 },
@@ -660,7 +660,7 @@ impl CallFrame {
 
 /// The `ctx` object that represents the context in which the transaction is executed.
 pub(crate) struct JsEvmContext {
-    /// String, one of the 3 values CALL, CREATE and BLENDED
+    /// String, one of the two values CALL and CREATE
     pub(crate) r#type: String,
     /// Sender of the transaction
     pub(crate) from: Address,
@@ -771,8 +771,8 @@ impl EvmDbRef {
         let db = JsDb(db);
         let js_db = unsafe {
             core::mem::transmute::<
-                Box<dyn DatabaseRef<Error = String> + '_>,
-                Box<dyn DatabaseRef<Error = String> + 'static>,
+                Box<dyn DatabaseRef<Error = StringError> + '_>,
+                Box<dyn DatabaseRef<Error = StringError> + 'static>,
             >(Box::new(db))
         };
 
@@ -816,7 +816,7 @@ impl EvmDbRef {
             ));
         };
 
-        to_uint8_array(bytecode.bytecode().to_vec(), ctx)
+        to_uint8_array(bytecode.original_bytes().to_vec(), ctx)
     }
 
     fn read_state(
@@ -936,7 +936,7 @@ unsafe impl Trace for EvmDbRef {
 /// DB is the object that allows the js inspector to interact with the database.
 struct EvmDbRefInner {
     state: StateRef,
-    db: GcDb<Box<dyn DatabaseRef<Error = String> + 'static>>,
+    db: GcDb<Box<dyn DatabaseRef<Error = StringError> + 'static>>,
 }
 
 /// Guard the inner references, once this value is dropped the inner reference is also removed.
@@ -945,33 +945,51 @@ struct EvmDbRefInner {
 #[must_use]
 pub(crate) struct EvmDbGuard<'a, 'b> {
     _state_guard: GcGuard<'a, EvmState>,
-    _db_guard: GcGuard<'b, Box<dyn DatabaseRef<Error = String> + 'static>>,
+    _db_guard: GcGuard<'b, Box<dyn DatabaseRef<Error = StringError> + 'static>>,
 }
 
 /// A wrapper Database for the JS context.
 pub(crate) struct JsDb<DB: DatabaseRef>(DB);
+
+#[derive(Clone, Debug)]
+pub(crate) struct StringError(pub String);
+
+impl core::error::Error for StringError {}
+impl DBErrorMarker for StringError {}
+
+impl core::fmt::Display for StringError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<String> for StringError {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
 
 impl<DB> DatabaseRef for JsDb<DB>
 where
     DB: DatabaseRef,
     DB::Error: core::fmt::Display,
 {
-    type Error = String;
+    type Error = StringError;
 
     fn basic_ref(&self, _address: Address) -> Result<Option<AccountInfo>, Self::Error> {
-        self.0.basic_ref(_address).map_err(|e| e.to_string())
+        self.0.basic_ref(_address).map_err(|e| e.to_string().into())
     }
 
     fn code_by_hash_ref(&self, _code_hash: B256) -> Result<Bytecode, Self::Error> {
-        self.0.code_by_hash_ref(_code_hash).map_err(|e| e.to_string())
+        self.0.code_by_hash_ref(_code_hash).map_err(|e| e.to_string().into())
     }
 
     fn storage_ref(&self, _address: Address, _index: U256) -> Result<U256, Self::Error> {
-        self.0.storage_ref(_address, _index).map_err(|e| e.to_string())
+        self.0.storage_ref(_address, _index).map_err(|e| e.to_string().into())
     }
 
     fn block_hash_ref(&self, _number: u64) -> Result<B256, Self::Error> {
-        self.0.block_hash_ref(_number).map_err(|e| e.to_string())
+        self.0.block_hash_ref(_number).map_err(|e| e.to_string().into())
     }
 }
 
@@ -982,7 +1000,7 @@ mod tests {
         json_stringify, register_builtins, to_serde_value, BIG_INT_JS,
     };
     use boa_engine::{property::Attribute, Source};
-    use revm::db::{CacheDB, EmptyDB};
+    use revm::{database::CacheDB, database_interface::EmptyDB};
 
     #[test]
     fn test_contract() {
@@ -1010,7 +1028,7 @@ mod tests {
         let res = call
             .as_callable()
             .unwrap()
-            .call(&JsValue::undefined(), &[contract_arg.clone()], &mut ctx)
+            .call(&JsValue::undefined(), core::slice::from_ref(&contract_arg), &mut ctx)
             .unwrap();
         assert!(res.is_object());
         let obj = res.as_object().unwrap();
@@ -1022,7 +1040,7 @@ mod tests {
         let res = get_address
             .as_callable()
             .unwrap()
-            .call(&JsValue::undefined(), &[contract_arg.clone()], &mut ctx)
+            .call(&JsValue::undefined(), core::slice::from_ref(&contract_arg), &mut ctx)
             .unwrap();
         assert!(res.is_object());
 
@@ -1033,7 +1051,7 @@ mod tests {
         let res = call
             .as_callable()
             .unwrap()
-            .call(&JsValue::undefined(), &[contract_arg.clone()], &mut ctx)
+            .call(&JsValue::undefined(), core::slice::from_ref(&contract_arg), &mut ctx)
             .unwrap();
         assert_eq!(
             res.to_string(&mut ctx).unwrap().to_std_string().unwrap(),
@@ -1136,7 +1154,9 @@ mod tests {
 
             let addr = Address::default();
             let addr = JsValue::from(js_string!(addr.to_string()));
-            let res = result_fn.call(&(obj.clone().into()), &[addr.clone()], &mut context).unwrap();
+            let res = result_fn
+                .call(&(obj.clone().into()), core::slice::from_ref(&addr), &mut context)
+                .unwrap();
             assert!(!res.as_boolean().unwrap());
 
             // drop the guard which also drops any GC values
@@ -1167,9 +1187,9 @@ mod tests {
             obj.get(js_string!("step"), &mut context).unwrap().as_object().cloned().unwrap();
 
         let mut stack = Stack::new();
-        stack.push(U256::from(35000)).unwrap();
-        stack.push(U256::from(35000)).unwrap();
-        stack.push(U256::from(35000)).unwrap();
+        let _ = stack.push(U256::from(35000));
+        let _ = stack.push(U256::from(35000));
+        let _ = stack.push(U256::from(35000));
         let (stack_ref, _stack_guard) = StackRef::new(&stack);
         let mem = SharedMemory::new();
         let (mem_ref, _mem_guard) = MemoryRef::new(&mem);
@@ -1259,9 +1279,9 @@ mod tests {
             obj.get(js_string!("step"), &mut context).unwrap().as_object().cloned().unwrap();
 
         let mut stack = Stack::new();
-        stack.push(U256::from(35000)).unwrap();
-        stack.push(U256::from(35000)).unwrap();
-        stack.push(U256::from(35000)).unwrap();
+        let _ = stack.push(U256::from(35000));
+        let _ = stack.push(U256::from(35000));
+        let _ = stack.push(U256::from(35000));
         let (stack_ref, _stack_guard) = StackRef::new(&stack);
         let mem = SharedMemory::new();
         let (mem_ref, _mem_guard) = MemoryRef::new(&mem);

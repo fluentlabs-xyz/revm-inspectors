@@ -3,7 +3,7 @@ use alloy_rpc_types_trace::{
     geth::{CallConfig, FlatCallConfig, GethDefaultTracingOptions, PreStateConfig},
     parity::TraceType,
 };
-use revm::interpreter::OpCode;
+use revm::bytecode::opcode::OpCode;
 
 /// 256 bits each marking whether an opcode should be included into steps trace or not.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,6 +121,24 @@ impl TracingInspectorConfig {
             record_opcodes_filter: None,
             record_immediate_bytes: false,
         }
+    }
+
+    /// Returns the [`TracingInspectorConfig`] for [`TraceType::StateDiff`].
+    ///
+    /// This is the same as [`Self::default_parity`]
+    ///
+    /// Note: the parity statediffs can be populated entirely via the execution result, so we don't
+    /// need statediff recording
+    pub const fn parity_statediff() -> Self {
+        Self::default_parity()
+    }
+
+    /// Returns the [`TracingInspectorConfig`] for [`TraceType::VmTrace`].
+    pub const fn parity_vm_trace() -> Self {
+        Self::default_parity()
+            .set_steps(true)
+            .set_stack_snapshots(StackSnapshotType::Pushes)
+            .set_memory_snapshots(true)
     }
 
     /// Returns a config for geth style traces.
